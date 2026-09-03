@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#1F3A34">
+<title>Passo Certo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Lora:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root{
+    --bg:#FAF6EE;
+    --surface:#FFFFFF;
+    --ink:#22312C;
+    --ink-soft:#5B6A62;
+    --primary:#1F3A34;
+    --primary-light:#2E5347;
+    --accent:#C99A3B;
+    --accent-ink:#3A2C0B;
+    --danger:#B3492F;
+    --success:#4C7A5A;
+    --border:#E4DCC9;
+    --radius:14px;
+    --font-display:'Lora', Georgia, serif;
+    --font-body:'Inter', -apple-system, "Segoe UI", sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;height:100%;}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:var(--font-body);
+    -webkit-font-smoothing:antialiased;
+    overscroll-behavior-y:contain;
+  }
+  #app{max-width:480px;margin:0 auto;min-height:100vh;display:flex;flex-direction:column;position:relative;background:var(--bg);}
+  h1,h2,h3{font-family:var(--font-display);font-weight:600;margin:0;color:var(--primary);}
+  a{color:inherit;}
+  button{font-family:var(--font-body);cursor:pointer;}
+  input,select,textarea{font-family:var(--font-body);}
+
+  /* Header */
+  .topbar{
+    background:var(--primary);
+    color:#F4EFE2;
+    padding:18px 20px 16px;
+    display:flex;align-items:center;justify-content:space-between;
+    position:sticky;top:0;z-index:10;
+  }
+  .topbar h1{color:#F4EFE2;font-size:20px;letter-spacing:.2px;}
+  .topbar .sub{font-size:12px;color:#C9D6CC;margin-top:2px;}
+  .icon-btn{
+    background:rgba(255,255,255,.12);border:none;color:#F4EFE2;
+    width:36px;height:36px;border-radius:10px;font-size:16px;
+    display:flex;align-items:center;justify-content:center;
+  }
+
+  /* Content area */
+  .content{flex:1;padding:16px 16px 90px;}
+
+  /* Bottom nav */
+  .bottomnav{
+    position:fixed;bottom:0;left:0;right:0;
+    max-width:480px;margin:0 auto;
+    background:var(--surface);
+    border-top:1px solid var(--border);
+    display:flex;
+    padding:6px 4px calc(6px + env(safe-area-inset-bottom));
+    z-index:20;
+  }
+  .navbtn{
+    flex:1;background:none;border:none;display:flex;flex-direction:column;
+    align-items:center;gap:2px;padding:8px 2px;border-radius:10px;color:var(--ink-soft);
+    font-size:11px;
+  }
+  .navbtn .ic{font-size:20px;}
+  .navbtn.active{color:var(--primary);background:#EFEADB;}
+
+  /* Cards / lists */
+  .card{
+    background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+    padding:16px;margin-bottom:12px;
+  }
+  .menu-card{
+    display:flex;align-items:center;gap:14px;
+    background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+    padding:18px;margin-bottom:12px;
+  }
+  .menu-card .ic{font-size:26px;width:44px;height:44px;background:#EFEADB;border-radius:12px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+  .menu-card .txt strong{display:block;font-size:15px;color:var(--primary);font-family:var(--font-display);}
+  .menu-card .txt span{font-size:12.5px;color:var(--ink-soft);}
+
+  .list-item{
+    display:flex;align-items:center;justify-content:space-between;gap:10px;
+    background:var(--surface);border:1px solid var(--border);border-radius:12px;
+    padding:13px 14px;margin-bottom:8px;
+  }
+  .list-item .name{font-weight:600;font-size:14.5px;}
+  .list-item .meta{font-size:12px;color:var(--ink-soft);margin-top:2px;}
+  .tag{font-size:10.5px;padding:3px 8px;border-radius:999px;font-weight:600;}
+  .tag.ativo{background:#E3EEE5;color:var(--success);}
+  .tag.inativo{background:#F1E4DF;color:var(--danger);}
+
+  /* Forms */
+  .field{margin-bottom:14px;}
+  .field label{display:block;font-size:12.5px;font-weight:600;color:var(--ink-soft);margin-bottom:5px;}
+  .field input, .field select, .field textarea{
+    width:100%;padding:11px 12px;border:1px solid var(--border);border-radius:10px;
+    background:var(--surface);font-size:14.5px;color:var(--ink);
+  }
+  .field input:focus, .field select:focus, .field textarea:focus{outline:2px solid var(--accent);outline-offset:1px;}
+  .search-box{position:relative;margin-bottom:14px;}
+  .search-box input{width:100%;padding:11px 12px 11px 36px;border:1px solid var(--border);border-radius:10px;background:var(--surface);font-size:14px;}
+  .search-box .ic{position:absolute;left:11px;top:50%;transform:translateY(-50%);opacity:.5;}
+
+  .btn{
+    display:inline-flex;align-items:center;justify-content:center;gap:6px;
+    padding:12px 18px;border-radius:10px;border:none;font-weight:600;font-size:14.5px;width:100%;
+  }
+  .btn-primary{background:var(--accent);color:var(--accent-ink);}
+  .btn-secondary{background:var(--primary);color:#F4EFE2;}
+  .btn-outline{background:none;border:1px solid var(--border);color:var(--ink);}
+  .btn-danger{background:#F1E4DF;color:var(--danger);}
+  .btn-row{display:flex;gap:10px;}
+  .btn-row .btn{flex:1;}
+  .fab{
+    position:fixed;bottom:86px;right:calc(50% - 240px + 18px);
+    background:var(--accent);color:var(--accent-ink);border:none;
+    width:52px;height:52px;border-radius:16px;font-size:24px;
+    display:flex;align-items:center;justify-content:center;
+    box-shadow:0 6px 16px rgba(0,0,0,.18);z-index:15;
+  }
+  @media (max-width:520px){.fab{right:18px;}}
+
+  /* Modal / sheet */
+  .overlay{
+    position:fixed;inset:0;background:rgba(20,26,22,.45);z-index:30;
+    display:flex;align-items:flex-end;justify-content:center;
+  }
+  .sheet{
+    background:var(--bg);width:100%;max-width:480px;border-radius:20px 20px 0 0;
+    max-height:92vh;overflow-y:auto;padding:20px 20px calc(24px + env(safe-area-inset-bottom));
+    animation:slideup .18s ease-out;
+  }
+  @keyframes slideup{from{transform:translateY(16px);opacity:.6;}to{transform:translateY(0);opacity:1;}}
+  .sheet-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;}
+  .sheet-head h2{font-size:18px;}
+  .close-x{background:#EFEADB;border:none;width:30px;height:30px;border-radius:9px;font-size:15px;color:var(--ink-soft);}
+
+  .empty{text-align:center;padding:40px 12px;color:var(--ink-soft);}
+  .empty .ic{font-size:34px;margin-bottom:8px;}
+  .empty p{font-size:13.5px;margin:4px 0 0;}
+
+  .divider{height:1px;background:var(--border);margin:16px 0;}
+  .small{font-size:12px;color:var(--ink-soft);}
+  .msg{font-size:13px;padding:10px 12px;border-radius:10px;margin-bottom:12px;}
+  .msg.error{background:#F1E4DF;color:var(--danger);}
+  .msg.ok{background:#E3EEE5;color:var(--success);}
+
+  .check-row{
+    display:flex;align-items:center;justify-content:space-between;gap:10px;
+    background:var(--surface);border:1px solid var(--border);border-radius:12px;
+    padding:12px 14px;margin-bottom:8px;
+  }
+  .check-row.presente{border-color:var(--success);background:#F1F7F2;}
+  .toggle-pill{
+    border:1.5px solid var(--border);border-radius:999px;padding:6px 14px;font-size:12.5px;font-weight:600;
+    background:var(--surface);color:var(--ink-soft);flex-shrink:0;
+  }
+  .toggle-pill.on{background:var(--success);border-color:var(--success);color:#fff;}
+
+  .stat-row{display:flex;gap:10px;margin-bottom:14px;}
+  .stat{flex:1;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px;text-align:center;}
+  .stat .num{font-family:var(--font-display);font-size:22px;color:var(--primary);}
+  .stat .lbl{font-size:11px;color:var(--ink-soft);}
+
+  .center-screen{min-height:100vh;display:flex;flex-direction:column;justify-content:center;padding:32px 26px;}
+  .center-screen h1{font-size:26px;margin-bottom:6px;}
+  .center-screen .lead{color:var(--ink-soft);font-size:14px;margin-bottom:26px;}
+  .brand{display:flex;align-items:center;gap:10px;margin-bottom:8px;}
+  .brand .mark{width:40px;height:40px;background:var(--primary);border-radius:11px;display:flex;align-items:center;justify-content:center;color:#F4EFE2;font-size:19px;}
+
+  .chip-row{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;}
+  .chip{padding:8px 14px;border-radius:999px;border:1.5px solid var(--border);font-size:13px;background:var(--surface);color:var(--ink-soft);font-weight:600;}
+  .chip.active{background:var(--primary);border-color:var(--primary);color:#F4EFE2;}
+
+  .report-block{margin-bottom:16px;}
+  .report-block .title{font-family:var(--font-display);font-size:15px;color:var(--primary);margin-bottom:6px;}
+  .report-block .sub{font-size:12px;color:var(--ink-soft);margin-bottom:8px;}
+  .pill-list{display:flex;flex-wrap:wrap;gap:6px;}
+  .pill-list span{background:#EFEADB;color:var(--primary);font-size:12px;padding:4px 10px;border-radius:999px;}
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+/* ============ CAMADA DE DADOS (localStorage) ============ */
+const DB = {
+  get(key, def){ try{ const v = localStorage.getItem(key); return v ? JSON.parse(v) : def; }catch(e){ return def; } },
+  set(key, val){ localStorage.setItem(key, JSON.stringify(val)); }
+};
+const KEYS = { alunos:'pc_alunos', aulas:'pc_aulas', presencas:'pc_presencas', auth:'pc_auth' };
+
+let state = {
+  alunos: DB.get(KEYS.alunos, []),
+  aulas: DB.get(KEYS.aulas, []),
+  presencas: DB.get(KEYS.presencas, []),
+  auth: DB.get(KEYS.auth, null),
+  session: sessionStorage.getItem('pc_session') === '1',
+  screen: 'home',      // home | alunos | aulaform | chamada | historico | relatorios
+  editAlunoId: null,
+  currentAulaId: null,
+  reportType: 'aula',
+  msg: null
+};
+
+function persist(){
+  DB.set(KEYS.alunos, state.alunos);
+  DB.set(KEYS.aulas, state.aulas);
+  DB.set(KEYS.presencas, state.presencas);
+}
+function nextId(arr){ return arr.length ? Math.max(...arr.map(x=>x.id)) + 1 : 1; }
+function fmtDate(iso){
+  const [y,m,d] = iso.split('-');
+  return `${d}/${m}/${y}`;
+}
+function todayISO(){
+  const d = new Date();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+function onlyDigits(s){ return (s||'').replace(/\D/g,''); }
+function validaCPF(cpf){
+  cpf = onlyDigits(cpf);
+  if(cpf.length!==11 || /^(\d)\1{10}$/.test(cpf)) return false;
+  let soma=0;
+  for(let i=0;i<9;i++) soma += parseInt(cpf[i])*(10-i);
+  let r = (soma*10)%11; if(r===10) r=0;
+  if(r!==parseInt(cpf[9])) return false;
+  soma=0;
+  for(let i=0;i<10;i++) soma += parseInt(cpf[i])*(11-i);
+  r = (soma*10)%11; if(r===10) r=0;
+  return r===parseInt(cpf[10]);
+}
+function maskCPF(v){
+  v = onlyDigits(v).slice(0,11);
+  return v.replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d{1,2})$/,'$1-$2');
+}
+
+/* ============ AUTENTICAÇÃO (senha local, sem servidor) ============ */
+async function sha256(text){
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+
+/* ============ RENDER ============ */
+const root = document.getElementById('app');
+
+function render(){
+  if(!state.auth) return renderSetup();
+  if(!state.session) return renderLogin();
+  root.innerHTML = `
+    <div class="topbar">
+      <div><h1>Passo Certo</h1><div class="sub">${state.session ? 'Controle de presença' : ''}</div></div>
+      <button class="icon-btn" onclick="doLogout()" title="Sair">⏻</button>
+    </div>
+    <div class="content" id="content"></div>
+    ${bottomNav()}
+  `;
+  renderScreen();
+}
+
+function bottomNav(){
+  const items = [
+    {id:'home', ic:'🏠', lbl:'Início'},
+    {id:'alunos', ic:'👥', lbl:'Alunos'},
+    {id:'historico', ic:'✅', lbl:'Aulas'},
+    {id:'relatorios', ic:'📊', lbl:'Relatórios'}
+  ];
+  return `<div class="bottomnav">
+    ${items.map(i=>`<button class="navbtn ${state.screen===i.id?'active':''}" onclick="goTo('${i.id}')">
+      <span class="ic">${i.ic}</span>${i.lbl}
+    </button>`).join('')}
+  </div>`;
+}
+function goTo(screen){ state.screen = screen; state.msg=null; render(); }
+
+function renderScreen(){
+  const c = document.getElementById('content');
+  if(state.screen==='home') c.innerHTML = viewHome();
+  else if(state.screen==='alunos') c.innerHTML = viewAlunos();
+  else if(state.screen==='historico') c.innerHTML = viewHistorico();
+  else if(state.screen==='chamada') c.innerHTML = viewChamada();
+  else if(state.screen==='relatorios') c.innerHTML = viewRelatorios();
+}
+
+/* ---------- SETUP (primeira execução) ---------- */
+function renderSetup(){
+  root.innerHTML = `
+  <div class="center-screen">
+    <div class="brand"><div class="mark">📘</div><h1>Passo Certo</h1></div>
+    <p class="lead">Vamos configurar sua senha de acesso. Isso protege os dados dos alunos, que ficam salvos só neste aparelho.</p>
+    <div id="setupMsg"></div>
+    <div class="field"><label>Crie uma senha</label><input id="s1" type="password" placeholder="Mínimo 4 caracteres"></div>
+    <div class="field"><label>Confirme a senha</label><input id="s2" type="password"></div>
+    <div class="divider"></div>
+    <div class="field"><label>Pergunta de segurança (para recuperar a senha)</label>
+      <select id="s3">
+        <option>Nome do seu primeiro animal de estimação</option>
+        <option>Cidade onde você nasceu</option>
+        <option>Nome da sua primeira escola</option>
+        <option>Comida favorita</option>
+      </select>
+    </div>
+    <div class="field"><label>Resposta</label><input id="s4" type="text" placeholder="Sua resposta"></div>
+    <button class="btn btn-primary" onclick="doSetup()">Concluir configuração</button>
+  </div>`;
+}
+async function doSetup(){
+  const p1=document.getElementById('s1').value, p2=document.getElementById('s2').value;
+  const q=document.getElementById('s3').value, a=document.getElementById('s4').value.trim();
+  const msg=document.getElementById('setupMsg');
+  if(p1.length<4){ msg.innerHTML='<div class="msg error">A senha precisa ter pelo menos 4 caracteres.</div>'; return; }
+  if(p1!==p2){ msg.innerHTML='<div class="msg error">As senhas não coincidem.</div>'; return; }
+  if(!a){ msg.innerHTML='<div class="msg error">Preencha a resposta de segurança.</div>'; return; }
+  state.auth = { passHash: await sha256(p1), question: q, answerHash: await sha256(a.toLowerCase()) };
+  DB.set(KEYS.auth, state.auth);
+  state.session = true; sessionStorage.setItem('pc_session','1');
+  render();
+}
+
+/* ---------- LOGIN ---------- */
+function renderLogin(){
+  root.innerHTML = `
+  <div class="center-screen">
+    <div class="brand"><div class="mark">📘</div><h1>Passo Certo</h1></div>
+    <p class="lead">Digite sua senha para abrir o app.</p>
+    <div id="loginMsg"></div>
+    <div class="field"><label>Senha</label><input id="lp" type="password" onkeydown="if(event.key==='Enter')doLogin()"></div>
+    <button class="btn btn-primary" onclick="doLogin()">Entrar</button>
+    <button class="btn btn-outline" style="margin-top:10px" onclick="goRecover()">Esqueci minha senha</button>
+  </div>`;
+  setTimeout(()=>document.getElementById('lp') && document.getElementById('lp').focus(),50);
+}
+async function doLogin(){
+  const p = document.getElementById('lp').value;
+  const h = await sha256(p);
+  if(h === state.auth.passHash){
+    state.session = true; sessionStorage.setItem('pc_session','1'); render();
+  } else {
+    document.getElementById('loginMsg').innerHTML = '<div class="msg error">Senha incorreta.</div>';
+  }
+}
+function doLogout(){ state.session=false; sessionStorage.removeItem('pc_session'); render(); }
+
+function goRecover(){
+  root.innerHTML = `
+  <div class="center-screen">
+    <h1>Recuperar senha</h1>
+    <p class="lead">${state.auth.question}</p>
+    <div id="recMsg"></div>
+    <div class="field"><label>Sua resposta</label><input id="ra" type="text"></div>
+    <div class="field"><label>Nova senha</label><input id="rp1" type="password"></div>
+    <div class="field"><label>Confirme a nova senha</label><input id="rp2" type="password"></div>
+    <button class="btn btn-primary" onclick="doRecover()">Redefinir senha</button>
+    <button class="btn btn-outline" style="margin-top:10px" onclick="render()">Voltar</button>
+  </div>`;
+}
+async function doRecover(){
+  const a = document.getElementById('ra').value.trim().toLowerCase();
+  const p1 = document.getElementById('rp1').value, p2 = document.getElementById('rp2').value;
+  const msg = document.getElementById('recMsg');
+  const ah = await sha256(a);
+  if(ah !== state.auth.answerHash){ msg.innerHTML='<div class="msg error">Resposta incorreta.</div>'; return; }
+  if(p1.length<4 || p1!==p2){ msg.innerHTML='<div class="msg error">As senhas devem coincidir e ter ao menos 4 caracteres.</div>'; return; }
+  state.auth.passHash = await sha256(p1);
+  DB.set(KEYS.auth, state.auth);
+  state.session = true; sessionStorage.setItem('pc_session','1');
+  render();
+}
+
+/* ---------- HOME ---------- */
+function viewHome(){
+  const alunosAtivos = state.alunos.filter(a=>!a.dataDesativacao).length;
+  const totalAulas = state.aulas.length;
+  return `
+  <div class="stat-row">
+    <div class="stat"><div class="num">${alunosAtivos}</div><div class="lbl">Alunos ativos</div></div>
+    <div class="stat"><div class="num">${totalAulas}</div><div class="lbl">Aulas registradas</div></div>
+  </div>
+  <div class="menu-card" onclick="goTo('alunos')"><div class="ic">👥</div><div class="txt"><strong>Alunos</strong><span>Cadastrar, editar e pesquisar</span></div></div>
+  <div class="menu-card" onclick="openNovaAula()"><div class="ic">➕</div><div class="txt"><strong>Nova aula</strong><span>Iniciar chamada de hoje</span></div></div>
+  <div class="menu-card" onclick="goTo('historico')"><div class="ic">🗂️</div><div class="txt"><strong>Histórico de aulas</strong><span>Ver aulas já registradas</span></div></div>
+  <div class="menu-card" onclick="goTo('relatorios')"><div class="ic">📊</div><div class="txt"><strong>Relatórios</strong><span>Consultar e exportar</span></div></div>
+  <div class="divider"></div>
+  <button class="btn btn-outline" onclick="openBackup()">💾 Backup dos dados</button>
+  `;
+}
+
+/* ---------- ALUNOS ---------- */
+let alunoSearch = '';
+function viewAlunos(){
+  const termo = alunoSearch.toLowerCase();
+  const lista = state.alunos
+    .filter(a => !termo || a.nome.toLowerCase().includes(termo) || onlyDigits(a.cpf).includes(onlyDigits(termo)) || (a.celular||'').includes(termo))
+    .sort((a,b)=>a.nome.localeCompare(b.nome));
+  return `
+  <div class="search-box">
+    <span class="ic">🔍</span>
+    <input placeholder="Buscar por nome, CPF ou celular" value="${alunoSearch}" oninput="alunoSearch=this.value; renderScreen()">
+  </div>
+  ${lista.length===0 ? `<div class="empty"><div class="ic">👥</div><p>Nenhum aluno encontrado. Toque em + para cadastrar.</p></div>` :
+    lista.map(a=>`
+    <div class="list-item" onclick="openAlunoForm(${a.id})">
+      <div>
+        <div class="name">${a.nome}</div>
+        <div class="meta">CPF ${a.cpf} · ${a.celular||'sem celular'}</div>
+      </div>
+      <span class="tag ${a.dataDesativacao?'inativo':'ativo'}">${a.dataDesativacao?'Inativo':'Ativo'}</span>
+    </div>`).join('')}
+  <button class="fab" onclick="openAlunoForm(null)">+</button>
+  `;
+}
+function openAlunoForm(id){
+  state.editAlunoId = id;
+  const a = id ? state.alunos.find(x=>x.id===id) : null;
+  showSheet(`
+    <div class="sheet-head"><h2>${a?'Editar aluno':'Novo aluno'}</h2><button class="close-x" onclick="closeSheet()">✕</button></div>
+    <div id="alunoMsg"></div>
+    <div class="field"><label>Nome completo</label><input id="fNome" value="${a?a.nome:''}"></div>
+    <div class="field"><label>CPF</label><input id="fCpf" value="${a?a.cpf:''}" maxlength="14" oninput="this.value=maskCPF(this.value)"></div>
+    <div class="field"><label>Data de nascimento</label><input id="fNasc" type="date" value="${a?a.nascimento:''}"></div>
+    <div class="field"><label>Celular</label><input id="fCel" value="${a?a.celular:''}" placeholder="(00) 00000-0000"></div>
+    <div class="field"><label>E-mail</label><input id="fEmail" type="email" value="${a?a.email:''}"></div>
+    <button class="btn btn-primary" onclick="salvarAluno()">Salvar</button>
+    ${a?`<div class="btn-row" style="margin-top:10px">
+      <button class="btn ${a.dataDesativacao?'btn-outline':'btn-danger'}" onclick="toggleAtivo(${a.id})">${a.dataDesativacao?'Reativar aluno':'Desativar aluno'}</button>
+    </div>`:''}
+  `);
+}
+function salvarAluno(){
+  const nome = document.getElementById('fNome').value.trim();
+  const cpf = document.getElementById('fCpf').value.trim();
+  const nascimento = document.getElementById('fNasc').value;
+  const celular = document.getElementById('fCel').value.trim();
+  const email = document.getElementById('fEmail').value.trim();
+  const msg = document.getElementById('alunoMsg');
+  if(!nome || !cpf || !nascimento){ msg.innerHTML='<div class="msg error">Preencha nome, CPF e data de nascimento.</div>'; return; }
+  if(!validaCPF(cpf)){ msg.innerHTML='<div class="msg error">CPF inválido. Confira os números digitados.</div>'; return; }
+  const cpfLimpo = onlyDigits(cpf);
+  const duplicado = state.alunos.find(a => onlyDigits(a.cpf)===cpfLimpo && a.id!==state.editAlunoId);
+  if(duplicado){ msg.innerHTML='<div class="msg error">Já existe um aluno cadastrado com este CPF.</div>'; return; }
+
+  if(state.editAlunoId){
+    const a = state.alunos.find(x=>x.id===state.editAlunoId);
+    Object.assign(a, {nome, cpf, nascimento, celular, email});
+  } else {
+    state.alunos.push({id: nextId(state.alunos), nome, cpf, nascimento, celular, email, dataDesativacao:null});
+  }
+  persist(); closeSheet(); renderScreen();
+}
+function toggleAtivo(id){
+  const a = state.alunos.find(x=>x.id===id);
+  a.dataDesativacao = a.dataDesativacao ? null : todayISO();
+  persist(); closeSheet(); renderScreen();
+}
+
+/* ---------- NOVA AULA ---------- */
+function openNovaAula(){
+  showSheet(`
+    <div class="sheet-head"><h2>Nova aula</h2><button class="close-x" onclick="closeSheet()">✕</button></div>
+    <div class="field"><label>Data da aula</label><input id="naData" type="date" value="${todayISO()}"></div>
+    <div class="field"><label>Observações (opcional)</label><textarea id="naObs" rows="3" placeholder="Ex: aula de reposição"></textarea></div>
+    <button class="btn btn-primary" onclick="criarAula()">Iniciar chamada</button>
+  `);
+}
+function criarAula(){
+  const data = document.getElementById('naData').value || todayISO();
+  const obs = document.getElementById('naObs').value.trim();
+  const aula = {id: nextId(state.aulas), data, observacoes: obs};
+  state.aulas.push(aula);
+  persist(); closeSheet();
+  state.currentAulaId = aula.id;
+  state.screen = 'chamada';
+  render();
+}
+
+/* ---------- HISTÓRICO DE AULAS ---------- */
+function viewHistorico(){
+  const lista = [...state.aulas].sort((a,b)=> b.data.localeCompare(a.data) || b.id-a.id);
+  return `
+  ${lista.length===0 ? `<div class="empty"><div class="ic">🗂️</div><p>Nenhuma aula registrada ainda.</p></div>` :
+    lista.map(au=>{
+      const pres = state.presencas.filter(p=>p.idAula===au.id);
+      const presentes = pres.filter(p=>p.status==='PRESENTE').length;
+      return `<div class="list-item" onclick="abrirAula(${au.id})">
+        <div><div class="name">Aula de ${fmtDate(au.data)}</div>
+        <div class="meta">${pres.length? presentes+' presentes de '+pres.length : 'Chamada não finalizada'}${au.observacoes?' · '+au.observacoes:''}</div></div>
+        <span>›</span>
+      </div>`;
+    }).join('')}
+  <button class="fab" onclick="openNovaAula()">+</button>
+  `;
+}
+function abrirAula(id){ state.currentAulaId = id; state.screen='chamada'; render(); }
+
+/* ---------- CHAMADA ---------- */
+let chamadaSearch = '';
+let chamadaMarcados = null; // Set de ids de alunos marcados como presentes (sessão de edição)
+function viewChamada(){
+  const aula = state.aulas.find(a=>a.id===state.currentAulaId);
+  if(!aula) return `<div class="empty"><p>Aula não encontrada.</p></div>`;
+  const existentes = state.presencas.filter(p=>p.idAula===aula.id);
+  if(chamadaMarcados===null){
+    chamadaMarcados = new Set(existentes.filter(p=>p.status==='PRESENTE').map(p=>p.idAluno));
+  }
+  const ativos = state.alunos.filter(a=>!a.dataDesativacao)
+    .filter(a=>!chamadaSearch || a.nome.toLowerCase().includes(chamadaSearch.toLowerCase()))
+    .sort((a,b)=>a.nome.localeCompare(b.nome));
+  const totalPresentes = chamadaMarcados.size;
+  return `
+  <button class="btn btn-outline" style="margin-bottom:12px" onclick="chamadaMarcados=null; goTo('historico')">← Voltar</button>
+  <h2 style="margin-bottom:4px">Aula de ${fmtDate(aula.data)}</h2>
+  <p class="small" style="margin-bottom:12px">${aula.observacoes||'Sem observações'} · ${totalPresentes} presente(s) de ${state.alunos.filter(a=>!a.dataDesativacao).length} ativos</p>
+  <div class="search-box"><span class="ic">🔍</span><input placeholder="Buscar aluno" value="${chamadaSearch}" oninput="chamadaSearch=this.value; renderScreen()"></div>
+  ${ativos.length===0? `<div class="empty"><p>Nenhum aluno ativo cadastrado.</p></div>` :
+    ativos.map(a=>{
+      const on = chamadaMarcados.has(a.id);
+      return `<div class="check-row ${on?'presente':''}" onclick="toggleMarcado(${a.id})">
+        <span>${a.nome}</span>
+        <span class="toggle-pill ${on?'on':''}">${on?'✓ Presente':'Ausente'}</span>
+      </div>`;
+    }).join('')}
+  <div style="height:14px"></div>
+  <button class="btn btn-secondary" onclick="confirmarFinalizar(${aula.id})">Finalizar aula</button>
+  `;
+}
+function toggleMarcado(id){
+  if(chamadaMarcados.has(id)) chamadaMarcados.delete(id); else chamadaMarcados.add(id);
+  renderScreen();
+}
+function confirmarFinalizar(aulaId){
+  const ativos = state.alunos.filter(a=>!a.dataDesativacao);
+  const presentes = chamadaMarcados.size;
+  const ausentes = ativos.length - presentes;
+  showSheet(`
+    <div class="sheet-head"><h2>Confirmar chamada</h2><button class="close-x" onclick="closeSheet()">✕</button></div>
+    <p>Você está prestes a gravar esta chamada definitivamente:</p>
+    <div class="stat-row">
+      <div class="stat"><div class="num">${presentes}</div><div class="lbl">Presentes</div></div>
+      <div class="stat"><div class="num">${ausentes}</div><div class="lbl">Ausentes</div></div>
+    </div>
+    <button class="btn btn-primary" onclick="finalizarAula(${aulaId})">Confirmar e gravar</button>
+    <button class="btn btn-outline" style="margin-top:10px" onclick="closeSheet()">Cancelar</button>
+  `);
+}
+function finalizarAula(aulaId){
+  state.presencas = state.presencas.filter(p=>p.idAula!==aulaId);
+  state.alunos.filter(a=>!a.dataDesativacao).forEach(a=>{
+    state.presencas.push({
+      id: nextId(state.presencas)+Math.random(),
+      idAluno: a.id, idAula: aulaId,
+      status: chamadaMarcados.has(a.id) ? 'PRESENTE' : 'AUSENTE'
+    });
+  });
+  // normaliza ids
+  state.presencas = state.presencas.map((p,i)=>({...p, id:i+1}));
+  persist(); closeSheet(); chamadaMarcados=null;
+  state.screen='historico'; render();
+}
+
+/* ---------- RELATÓRIOS ---------- */
+function viewRelatorios(){
+  return `
+  <div class="chip-row">
+    <button class="chip ${state.reportType==='aula'?'active':''}" onclick="state.reportType='aula'; renderScreen()">Aula × Alunos presentes</button>
+    <button class="chip ${state.reportType==='aluno'?'active':''}" onclick="state.reportType='aluno'; renderScreen()">Aluno × Aulas presentes</button>
+  </div>
+  ${state.reportType==='aula' ? relatorioAulaForm() : relatorioAlunoForm()}
+  `;
+}
+function relatorioAulaForm(){
+  return `
+  <div class="card">
+    <div class="field"><label>Data inicial</label><input id="rfDataIni" type="date"></div>
+    <div class="field"><label>Data final</label><input id="rfDataFim" type="date"></div>
+    <button class="btn btn-primary" onclick="gerarRelatorioAula()">Gerar relatório</button>
+  </div>
+  <div id="reportResult"></div>
+  `;
+}
+function relatorioAlunoForm(){
+  return `
+  <div class="card">
+    <div class="field"><label>Nome do aluno (opcional)</label><input id="rfNome" placeholder="Ex: João"></div>
+    <div class="field"><label>CPF (opcional)</label><input id="rfCpf" placeholder="000.000.000-00" oninput="this.value=maskCPF(this.value)"></div>
+    <div class="field"><label>Data inicial</label><input id="rfDataIni2" type="date"></div>
+    <div class="field"><label>Data final</label><input id="rfDataFim2" type="date"></div>
+    <button class="btn btn-primary" onclick="gerarRelatorioAluno()">Gerar relatório</button>
+  </div>
+  <div id="reportResult"></div>
+  `;
+}
+let lastReport = null; // {tipo, dados:[...], titulo}
+
+function gerarRelatorioAula(){
+  const ini = document.getElementById('rfDataIni').value || '0000-01-01';
+  const fim = document.getElementById('rfDataFim').value || '9999-12-31';
+  const aulas = state.aulas.filter(a=>a.data>=ini && a.data<=fim).sort((a,b)=>a.data.localeCompare(b.data));
+  const dados = aulas.map(au=>{
+    const nomes = state.presencas.filter(p=>p.idAula===au.id && p.status==='PRESENTE')
+      .map(p=>state.alunos.find(a=>a.id===p.idAluno)?.nome).filter(Boolean);
+    return { aula: au, nomes };
+  });
+  lastReport = {tipo:'aula', dados};
+  const html = dados.length===0 ? `<div class="empty"><p>Nenhuma aula encontrada no período.</p></div>` :
+    dados.map(d=>`<div class="report-block">
+      <div class="title">Aula de ${fmtDate(d.aula.data)}</div>
+      <div class="sub">${d.nomes.length} presente(s)</div>
+      <div class="pill-list">${d.nomes.length? d.nomes.map(n=>`<span>${n}</span>`).join('') : '<span>Nenhum presente</span>'}</div>
+    </div>`).join('');
+  document.getElementById('reportResult').innerHTML = html + exportButtons();
+}
+function gerarRelatorioAluno(){
+  const nome = (document.getElementById('rfNome').value||'').toLowerCase();
+  const cpf = onlyDigits(document.getElementById('rfCpf').value||'');
+  const ini = document.getElementById('rfDataIni2').value || '0000-01-01';
+  const fim = document.getElementById('rfDataFim2').value || '9999-12-31';
+  const alunos = state.alunos.filter(a=>
+    (!nome || a.nome.toLowerCase().includes(nome)) &&
+    (!cpf || onlyDigits(a.cpf).includes(cpf))
+  ).sort((a,b)=>a.nome.localeCompare(b.nome));
+  const dados = alunos.map(al=>{
+    const aulas = state.presencas.filter(p=>p.idAluno===al.id && p.status==='PRESENTE')
+      .map(p=>state.aulas.find(a=>a.id===p.idAula))
+      .filter(a=>a && a.data>=ini && a.data<=fim)
+      .sort((a,b)=>a.data.localeCompare(b.data));
+    return {aluno: al, aulas};
+  });
+  lastReport = {tipo:'aluno', dados};
+  const html = dados.length===0 ? `<div class="empty"><p>Nenhum aluno encontrado.</p></div>` :
+    dados.map(d=>`<div class="report-block">
+      <div class="title">${d.aluno.nome}</div>
+      <div class="sub">${d.aulas.length} aula(s) presente</div>
+      <div class="pill-list">${d.aulas.length? d.aulas.map(a=>`<span>${fmtDate(a.data)}</span>`).join('') : '<span>Nenhuma presença no período</span>'}</div>
+    </div>`).join('');
+  document.getElementById('reportResult').innerHTML = html + exportButtons();
+}
+function exportButtons(){
+  return `<div class="btn-row" style="margin-top:6px">
+    <button class="btn btn-outline" onclick="exportarPDF()">📄 Exportar PDF</button>
+    <button class="btn btn-outline" onclick="exportarExcel()">📊 Exportar Excel</button>
+  </div>`;
+}
+function exportarPDF(){
+  if(!lastReport) return;
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  let y = 18;
+  doc.setFontSize(16); doc.text('Passo Certo - Relatório', 14, y); y+=10;
+  doc.setFontSize(10);
+  if(lastReport.tipo==='aula'){
+    lastReport.dados.forEach(d=>{
+      if(y>270){doc.addPage(); y=18;}
+      doc.setFontSize(12); doc.text(`Aula de ${fmtDate(d.aula.data)}`, 14, y); y+=6;
+      doc.setFontSize(10);
+      const texto = d.nomes.length ? d.nomes.join(', ') : 'Nenhum presente';
+      const linhas = doc.splitTextToSize(texto, 180);
+      doc.text(linhas, 14, y); y += linhas.length*5 + 8;
+    });
+  } else {
+    lastReport.dados.forEach(d=>{
+      if(y>270){doc.addPage(); y=18;}
+      doc.setFontSize(12); doc.text(d.aluno.nome, 14, y); y+=6;
+      doc.setFontSize(10);
+      const texto = d.aulas.length ? d.aulas.map(a=>fmtDate(a.data)).join(', ') : 'Nenhuma presença';
+      const linhas = doc.splitTextToSize(texto, 180);
+      doc.text(linhas, 14, y); y += linhas.length*5 + 8;
+    });
+  }
+  doc.save('passo-certo-relatorio.pdf');
+}
+function exportarExcel(){
+  if(!lastReport) return;
+  let rows = [];
+  if(lastReport.tipo==='aula'){
+    rows.push(['Aula','Data','Aluno presente']);
+    lastReport.dados.forEach(d=>{
+      if(d.nomes.length===0) rows.push([d.aula.id, fmtDate(d.aula.data), '']);
+      else d.nomes.forEach(n=> rows.push([d.aula.id, fmtDate(d.aula.data), n]));
+    });
+  } else {
+    rows.push(['Aluno','CPF','Data da aula presente']);
+    lastReport.dados.forEach(d=>{
+      if(d.aulas.length===0) rows.push([d.aluno.nome, d.aluno.cpf, '']);
+      else d.aulas.forEach(a=> rows.push([d.aluno.nome, d.aluno.cpf, fmtDate(a.data)]));
+    });
+  }
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Relatorio');
+  XLSX.writeFile(wb, 'passo-certo-relatorio.xlsx');
+}
+
+/* ---------- BACKUP ---------- */
+function openBackup(){
+  showSheet(`
+    <div class="sheet-head"><h2>Backup dos dados</h2><button class="close-x" onclick="closeSheet()">✕</button></div>
+    <p class="small">Seus dados ficam salvos apenas neste aparelho e neste navegador. Faça backup regularmente para não perder informações caso troque de celular ou limpe os dados do navegador.</p>
+    <button class="btn btn-primary" onclick="exportarBackup()">⬇️ Baixar backup (.json)</button>
+    <div class="divider"></div>
+    <label class="field"><label>Restaurar backup</label>
+      <input type="file" id="restoreFile" accept="application/json">
+    </label>
+    <button class="btn btn-outline" onclick="restaurarBackup()">⬆️ Restaurar a partir de arquivo</button>
+  `);
+}
+function exportarBackup(){
+  const data = { alunos: state.alunos, aulas: state.aulas, presencas: state.presencas, exportadoEm: new Date().toISOString() };
+  const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `passo-certo-backup-${todayISO()}.json`;
+  a.click(); URL.revokeObjectURL(url);
+}
+function restaurarBackup(){
+  const file = document.getElementById('restoreFile').files[0];
+  if(!file) return alert('Escolha um arquivo de backup primeiro.');
+  const reader = new FileReader();
+  reader.onload = (e)=>{
+    try{
+      const data = JSON.parse(e.target.result);
+      if(!confirm('Isso vai substituir os dados atuais pelos dados do backup. Continuar?')) return;
+      state.alunos = data.alunos||[]; state.aulas = data.aulas||[]; state.presencas = data.presencas||[];
+      persist(); closeSheet(); render();
+    }catch(err){ alert('Arquivo de backup inválido.'); }
+  };
+  reader.readAsText(file);
+}
+
+/* ---------- SHEET (modal) ---------- */
+function showSheet(html){
+  let ov = document.getElementById('overlay');
+  if(!ov){ ov = document.createElement('div'); ov.id='overlay'; ov.className='overlay'; document.body.appendChild(ov); }
+  ov.innerHTML = `<div class="sheet">${html}</div>`;
+  ov.onclick = (e)=>{ if(e.target===ov) closeSheet(); };
+}
+function closeSheet(){ const ov = document.getElementById('overlay'); if(ov) ov.remove(); }
+
+render();
+</script>
+</body>
+</html>
