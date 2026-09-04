@@ -11,7 +11,11 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Lora:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <style>
   :root{
     --bg:#FAF6EE;
@@ -44,7 +48,6 @@
   button{font-family:var(--font-body);cursor:pointer;}
   input,select,textarea{font-family:var(--font-body);}
 
-  /* Header */
   .topbar{
     background:var(--primary);
     color:#F4EFE2;
@@ -54,16 +57,15 @@
   }
   .topbar h1{color:#F4EFE2;font-size:20px;letter-spacing:.2px;}
   .topbar .sub{font-size:12px;color:#C9D6CC;margin-top:2px;}
+  .topbar-actions{display:flex;gap:8px;}
   .icon-btn{
     background:rgba(255,255,255,.12);border:none;color:#F4EFE2;
     width:36px;height:36px;border-radius:10px;font-size:16px;
     display:flex;align-items:center;justify-content:center;
   }
 
-  /* Content area */
   .content{flex:1;padding:16px 16px 90px;}
 
-  /* Bottom nav */
   .bottomnav{
     position:fixed;bottom:0;left:0;right:0;
     max-width:480px;margin:0 auto;
@@ -81,7 +83,6 @@
   .navbtn .ic{font-size:20px;}
   .navbtn.active{color:var(--primary);background:#EFEADB;}
 
-  /* Cards / lists */
   .card{
     background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
     padding:16px;margin-bottom:12px;
@@ -106,13 +107,13 @@
   .tag.ativo{background:#E3EEE5;color:var(--success);}
   .tag.inativo{background:#F1E4DF;color:var(--danger);}
 
-  /* Forms */
   .field{margin-bottom:14px;}
   .field label{display:block;font-size:12.5px;font-weight:600;color:var(--ink-soft);margin-bottom:5px;}
   .field input, .field select, .field textarea{
     width:100%;padding:11px 12px;border:1px solid var(--border);border-radius:10px;
     background:var(--surface);font-size:14.5px;color:var(--ink);
   }
+  .field textarea{font-family:'SF Mono',Consolas,monospace;font-size:12.5px;}
   .field input:focus, .field select:focus, .field textarea:focus{outline:2px solid var(--accent);outline-offset:1px;}
   .search-box{position:relative;margin-bottom:14px;}
   .search-box input{width:100%;padding:11px 12px 11px 36px;border:1px solid var(--border);border-radius:10px;background:var(--surface);font-size:14px;}
@@ -137,7 +138,6 @@
   }
   @media (max-width:520px){.fab{right:18px;}}
 
-  /* Modal / sheet */
   .overlay{
     position:fixed;inset:0;background:rgba(20,26,22,.45);z-index:30;
     display:flex;align-items:flex-end;justify-content:center;
@@ -205,7 +205,7 @@ const DB = {
   get(key, def){ try{ const v = localStorage.getItem(key); return v ? JSON.parse(v) : def; }catch(e){ return def; } },
   set(key, val){ localStorage.setItem(key, JSON.stringify(val)); }
 };
-const KEYS = { alunos:'pc_alunos', aulas:'pc_aulas', presencas:'pc_presencas', auth:'pc_auth' };
+const KEYS = { alunos:'pc_alunos', aulas:'pc_aulas', presencas:'pc_presencas', auth:'pc_auth', fbConfig:'pc_firebase_config' };
 
 let state = {
   alunos: DB.get(KEYS.alunos, []),
@@ -213,7 +213,7 @@ let state = {
   presencas: DB.get(KEYS.presencas, []),
   auth: DB.get(KEYS.auth, null),
   session: sessionStorage.getItem('pc_session') === '1',
-  screen: 'home',      // home | alunos | aulaform | chamada | historico | relatorios
+  screen: 'home',
   editAlunoId: null,
   currentAulaId: null,
   reportType: 'aula',
@@ -227,6 +227,7 @@ function persist(){
 }
 function nextId(arr){ return arr.length ? Math.max(...arr.map(x=>x.id)) + 1 : 1; }
 function fmtDate(iso){
+  if(!iso) return '';
   const [y,m,d] = iso.split('-');
   return `${d}/${m}/${y}`;
 }
@@ -234,25 +235,71 @@ function todayISO(){
   const d = new Date();
   return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 }
-function onlyDigits(s){ return (s||'').replace(/\D/g,''); }
-function validaCPF(cpf){
-  cpf = onlyDigits(cpf);
-  if(cpf.length!==11 || /^(\d)\1{10}$/.test(cpf)) return false;
-  let soma=0;
-  for(let i=0;i<9;i++) soma += parseInt(cpf[i])*(10-i);
-  let r = (soma*10)%11; if(r===10) r=0;
-  if(r!==parseInt(cpf[9])) return false;
-  soma=0;
-  for(let i=0;i<10;i++) soma += parseInt(cpf[i])*(11-i);
-  r = (soma*10)%11; if(r===10) r=0;
-  return r===parseInt(cpf[10]);
+
+/* ============ FIREBASE (nuvem gratuita, opcional) ============ */
+let fb = { db:null, auth:null, uid:null, ready:false, initStarted:false, error:null };
+
+function loadFirebaseConfig(){ return DB.get(KEYS.fbConfig, null); }
+function saveFirebaseConfig(cfg){ DB.set(KEYS.fbConfig, cfg); }
+
+async function initFirebaseIfConfigured(){
+  if(fb.initStarted) return;
+  const cfg = loadFirebaseConfig();
+  if(!cfg) return;
+  fb.initStarted = true;
+  try{
+    if(!firebase.apps.length) firebase.initializeApp(cfg);
+    fb.db = firebase.firestore();
+    fb.auth = firebase.auth();
+    try{ await fb.db.enablePersistence({synchronizeTabs:true}); }catch(e){ /* já habilitado ou não suportado neste navegador */ }
+    const cred = await fb.auth.signInAnonymously();
+    fb.uid = cred.user.uid;
+    fb.ready = true;
+    await syncInicial();
+  }catch(e){
+    console.error('Falha ao conectar ao Firebase', e);
+    fb.error = e.message; fb.ready = false;
+  }
 }
-function maskCPF(v){
-  v = onlyDigits(v).slice(0,11);
-  return v.replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d{1,2})$/,'$1-$2');
+function colAlunos(){ return fb.db.collection('users').doc(fb.uid).collection('alunos'); }
+function colAulas(){ return fb.db.collection('users').doc(fb.uid).collection('aulas'); }
+function colPresencas(){ return fb.db.collection('users').doc(fb.uid).collection('presencas'); }
+
+async function syncInicial(){
+  const [snapA, snapU, snapP] = await Promise.all([colAlunos().get(), colAulas().get(), colPresencas().get()]);
+  const cloudVazio = snapA.empty && snapU.empty && snapP.empty;
+  if(cloudVazio && (state.alunos.length || state.aulas.length || state.presencas.length)){
+    await pushTudo();
+  } else {
+    if(!snapA.empty) state.alunos = snapA.docs.map(d=>d.data());
+    if(!snapU.empty) state.aulas = snapU.docs.map(d=>d.data());
+    if(!snapP.empty) state.presencas = snapP.docs.map(d=>d.data());
+    persist();
+  }
+  render();
+}
+async function pushTudo(){
+  if(!fb.ready) return;
+  const ops = [];
+  state.alunos.forEach(a=> ops.push(colAlunos().doc(String(a.id)).set(a)));
+  state.aulas.forEach(a=> ops.push(colAulas().doc(String(a.id)).set(a)));
+  state.presencas.forEach(p=> ops.push(colPresencas().doc(String(p.id)).set(p)));
+  await Promise.all(ops);
+}
+function pushAluno(a){ if(fb.ready) colAlunos().doc(String(a.id)).set(a).catch(e=>console.error(e)); }
+function pushAula(a){ if(fb.ready) colAulas().doc(String(a.id)).set(a).catch(e=>console.error(e)); }
+function pushPresencas(list){ if(!fb.ready) return; list.forEach(p=> colPresencas().doc(String(p.id)).set(p).catch(e=>console.error(e))); }
+
+async function forcarSyncNuvem(){
+  if(!fb.ready) return;
+  const [snapA, snapU, snapP] = await Promise.all([colAlunos().get(), colAulas().get(), colPresencas().get()]);
+  state.alunos = snapA.docs.map(d=>d.data());
+  state.aulas = snapU.docs.map(d=>d.data());
+  state.presencas = snapP.docs.map(d=>d.data());
+  persist(); closeSheet(); render();
 }
 
-/* ============ AUTENTICAÇÃO (senha local, sem servidor) ============ */
+/* ============ AUTENTICAÇÃO (senha local) ============ */
 async function sha256(text){
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
   return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
@@ -266,15 +313,17 @@ function render(){
   if(!state.session) return renderLogin();
   root.innerHTML = `
     <div class="topbar">
-      <div><h1>Passo Certo</h1><div class="sub">${state.session ? 'Controle de presença' : ''}</div></div>
-      <button class="icon-btn" onclick="doLogout()" title="Sair">⏻</button>
+      <div><h1>Passo Certo</h1><div class="sub">Controle de presença</div></div>
+      <div class="topbar-actions">
+        <button class="icon-btn" onclick="openConfiguracoes()" title="Nuvem">${fb.ready?'☁️':'🌥️'}</button>
+        <button class="icon-btn" onclick="doLogout()" title="Sair">⏻</button>
+      </div>
     </div>
     <div class="content" id="content"></div>
     ${bottomNav()}
   `;
   renderScreen();
 }
-
 function bottomNav(){
   const items = [
     {id:'home', ic:'🏠', lbl:'Início'},
@@ -304,7 +353,7 @@ function renderSetup(){
   root.innerHTML = `
   <div class="center-screen">
     <div class="brand"><div class="mark">📘</div><h1>Passo Certo</h1></div>
-    <p class="lead">Vamos configurar sua senha de acesso. Isso protege os dados dos alunos, que ficam salvos só neste aparelho.</p>
+    <p class="lead">Vamos configurar sua senha de acesso. Isso protege os dados dos alunos, que ficam salvos neste aparelho (e na nuvem, se você configurar depois).</p>
     <div id="setupMsg"></div>
     <div class="field"><label>Crie uma senha</label><input id="s1" type="password" placeholder="Mínimo 4 caracteres"></div>
     <div class="field"><label>Confirme a senha</label><input id="s2" type="password"></div>
@@ -332,6 +381,7 @@ async function doSetup(){
   DB.set(KEYS.auth, state.auth);
   state.session = true; sessionStorage.setItem('pc_session','1');
   render();
+  initFirebaseIfConfigured();
 }
 
 /* ---------- LOGIN ---------- */
@@ -352,6 +402,7 @@ async function doLogin(){
   const h = await sha256(p);
   if(h === state.auth.passHash){
     state.session = true; sessionStorage.setItem('pc_session','1'); render();
+    initFirebaseIfConfigured();
   } else {
     document.getElementById('loginMsg').innerHTML = '<div class="msg error">Senha incorreta.</div>';
   }
@@ -397,8 +448,9 @@ function viewHome(){
   <div class="menu-card" onclick="openNovaAula()"><div class="ic">➕</div><div class="txt"><strong>Nova aula</strong><span>Iniciar chamada de hoje</span></div></div>
   <div class="menu-card" onclick="goTo('historico')"><div class="ic">🗂️</div><div class="txt"><strong>Histórico de aulas</strong><span>Ver aulas já registradas</span></div></div>
   <div class="menu-card" onclick="goTo('relatorios')"><div class="ic">📊</div><div class="txt"><strong>Relatórios</strong><span>Consultar e exportar</span></div></div>
+  <div class="menu-card" onclick="openConfiguracoes()"><div class="ic">☁️</div><div class="txt"><strong>Nuvem (Firebase)</strong><span>${fb.ready?'Conectado — dados protegidos na nuvem':'Não conectado — configurar backup automático'}</span></div></div>
   <div class="divider"></div>
-  <button class="btn btn-outline" onclick="openBackup()">💾 Backup dos dados</button>
+  <button class="btn btn-outline" onclick="openBackup()">💾 Backup manual (arquivo)</button>
   `;
 }
 
@@ -407,19 +459,19 @@ let alunoSearch = '';
 function viewAlunos(){
   const termo = alunoSearch.toLowerCase();
   const lista = state.alunos
-    .filter(a => !termo || a.nome.toLowerCase().includes(termo) || onlyDigits(a.cpf).includes(onlyDigits(termo)) || (a.celular||'').includes(termo))
+    .filter(a => !termo || a.nome.toLowerCase().includes(termo) || (a.celular||'').toLowerCase().includes(termo))
     .sort((a,b)=>a.nome.localeCompare(b.nome));
   return `
   <div class="search-box">
     <span class="ic">🔍</span>
-    <input placeholder="Buscar por nome, CPF ou celular" value="${alunoSearch}" oninput="alunoSearch=this.value; renderScreen()">
+    <input placeholder="Buscar por nome ou celular" value="${alunoSearch}" oninput="alunoSearch=this.value; renderScreen()">
   </div>
   ${lista.length===0 ? `<div class="empty"><div class="ic">👥</div><p>Nenhum aluno encontrado. Toque em + para cadastrar.</p></div>` :
     lista.map(a=>`
     <div class="list-item" onclick="openAlunoForm(${a.id})">
       <div>
         <div class="name">${a.nome}</div>
-        <div class="meta">CPF ${a.cpf} · ${a.celular||'sem celular'}</div>
+        <div class="meta">${a.celular || a.email || 'Sem contato cadastrado'}</div>
       </div>
       <span class="tag ${a.dataDesativacao?'inativo':'ativo'}">${a.dataDesativacao?'Inativo':'Ativo'}</span>
     </div>`).join('')}
@@ -432,11 +484,10 @@ function openAlunoForm(id){
   showSheet(`
     <div class="sheet-head"><h2>${a?'Editar aluno':'Novo aluno'}</h2><button class="close-x" onclick="closeSheet()">✕</button></div>
     <div id="alunoMsg"></div>
-    <div class="field"><label>Nome completo</label><input id="fNome" value="${a?a.nome:''}"></div>
-    <div class="field"><label>CPF</label><input id="fCpf" value="${a?a.cpf:''}" maxlength="14" oninput="this.value=maskCPF(this.value)"></div>
-    <div class="field"><label>Data de nascimento</label><input id="fNasc" type="date" value="${a?a.nascimento:''}"></div>
-    <div class="field"><label>Celular</label><input id="fCel" value="${a?a.celular:''}" placeholder="(00) 00000-0000"></div>
-    <div class="field"><label>E-mail</label><input id="fEmail" type="email" value="${a?a.email:''}"></div>
+    <div class="field"><label>Nome completo *</label><input id="fNome" value="${a?a.nome:''}" placeholder="Único campo obrigatório"></div>
+    <div class="field"><label>Data de nascimento (opcional)</label><input id="fNasc" type="date" value="${a&&a.nascimento?a.nascimento:''}"></div>
+    <div class="field"><label>Celular (opcional)</label><input id="fCel" value="${a&&a.celular?a.celular:''}" placeholder="(00) 00000-0000"></div>
+    <div class="field"><label>E-mail (opcional)</label><input id="fEmail" type="email" value="${a&&a.email?a.email:''}"></div>
     <button class="btn btn-primary" onclick="salvarAluno()">Salvar</button>
     ${a?`<div class="btn-row" style="margin-top:10px">
       <button class="btn ${a.dataDesativacao?'btn-outline':'btn-danger'}" onclick="toggleAtivo(${a.id})">${a.dataDesativacao?'Reativar aluno':'Desativar aluno'}</button>
@@ -445,29 +496,25 @@ function openAlunoForm(id){
 }
 function salvarAluno(){
   const nome = document.getElementById('fNome').value.trim();
-  const cpf = document.getElementById('fCpf').value.trim();
   const nascimento = document.getElementById('fNasc').value;
   const celular = document.getElementById('fCel').value.trim();
   const email = document.getElementById('fEmail').value.trim();
   const msg = document.getElementById('alunoMsg');
-  if(!nome || !cpf || !nascimento){ msg.innerHTML='<div class="msg error">Preencha nome, CPF e data de nascimento.</div>'; return; }
-  if(!validaCPF(cpf)){ msg.innerHTML='<div class="msg error">CPF inválido. Confira os números digitados.</div>'; return; }
-  const cpfLimpo = onlyDigits(cpf);
-  const duplicado = state.alunos.find(a => onlyDigits(a.cpf)===cpfLimpo && a.id!==state.editAlunoId);
-  if(duplicado){ msg.innerHTML='<div class="msg error">Já existe um aluno cadastrado com este CPF.</div>'; return; }
-
+  if(!nome){ msg.innerHTML='<div class="msg error">Informe ao menos o nome do aluno.</div>'; return; }
+  let alunoSalvo;
   if(state.editAlunoId){
-    const a = state.alunos.find(x=>x.id===state.editAlunoId);
-    Object.assign(a, {nome, cpf, nascimento, celular, email});
+    alunoSalvo = state.alunos.find(x=>x.id===state.editAlunoId);
+    Object.assign(alunoSalvo, {nome, nascimento, celular, email});
   } else {
-    state.alunos.push({id: nextId(state.alunos), nome, cpf, nascimento, celular, email, dataDesativacao:null});
+    alunoSalvo = {id: nextId(state.alunos), nome, nascimento, celular, email, dataDesativacao:null};
+    state.alunos.push(alunoSalvo);
   }
-  persist(); closeSheet(); renderScreen();
+  persist(); pushAluno(alunoSalvo); closeSheet(); renderScreen();
 }
 function toggleAtivo(id){
   const a = state.alunos.find(x=>x.id===id);
   a.dataDesativacao = a.dataDesativacao ? null : todayISO();
-  persist(); closeSheet(); renderScreen();
+  persist(); pushAluno(a); closeSheet(); renderScreen();
 }
 
 /* ---------- NOVA AULA ---------- */
@@ -475,7 +522,7 @@ function openNovaAula(){
   showSheet(`
     <div class="sheet-head"><h2>Nova aula</h2><button class="close-x" onclick="closeSheet()">✕</button></div>
     <div class="field"><label>Data da aula</label><input id="naData" type="date" value="${todayISO()}"></div>
-    <div class="field"><label>Observações (opcional)</label><textarea id="naObs" rows="3" placeholder="Ex: aula de reposição"></textarea></div>
+    <div class="field"><label>Observações (opcional)</label><textarea id="naObs" rows="3" placeholder="Ex: aula de reposição" style="font-family:var(--font-body);font-size:14.5px"></textarea></div>
     <button class="btn btn-primary" onclick="criarAula()">Iniciar chamada</button>
   `);
 }
@@ -484,7 +531,7 @@ function criarAula(){
   const obs = document.getElementById('naObs').value.trim();
   const aula = {id: nextId(state.aulas), data, observacoes: obs};
   state.aulas.push(aula);
-  persist(); closeSheet();
+  persist(); pushAula(aula); closeSheet();
   state.currentAulaId = aula.id;
   state.screen = 'chamada';
   render();
@@ -511,7 +558,7 @@ function abrirAula(id){ state.currentAulaId = id; state.screen='chamada'; render
 
 /* ---------- CHAMADA ---------- */
 let chamadaSearch = '';
-let chamadaMarcados = null; // Set de ids de alunos marcados como presentes (sessão de edição)
+let chamadaMarcados = null;
 function viewChamada(){
   const aula = state.aulas.find(a=>a.id===state.currentAulaId);
   if(!aula) return `<div class="empty"><p>Aula não encontrada.</p></div>`;
@@ -561,16 +608,13 @@ function confirmarFinalizar(aulaId){
 }
 function finalizarAula(aulaId){
   state.presencas = state.presencas.filter(p=>p.idAula!==aulaId);
-  state.alunos.filter(a=>!a.dataDesativacao).forEach(a=>{
-    state.presencas.push({
-      id: nextId(state.presencas)+Math.random(),
-      idAluno: a.id, idAula: aulaId,
-      status: chamadaMarcados.has(a.id) ? 'PRESENTE' : 'AUSENTE'
-    });
-  });
-  // normaliza ids
-  state.presencas = state.presencas.map((p,i)=>({...p, id:i+1}));
-  persist(); closeSheet(); chamadaMarcados=null;
+  const novos = state.alunos.filter(a=>!a.dataDesativacao).map(a=>({
+    id: `${aulaId}_${a.id}`,
+    idAluno: a.id, idAula: aulaId,
+    status: chamadaMarcados.has(a.id) ? 'PRESENTE' : 'AUSENTE'
+  }));
+  state.presencas.push(...novos);
+  persist(); pushPresencas(novos); closeSheet(); chamadaMarcados=null;
   state.screen='historico'; render();
 }
 
@@ -595,10 +639,15 @@ function relatorioAulaForm(){
   `;
 }
 function relatorioAlunoForm(){
+  const alunosOrdenados = [...state.alunos].sort((a,b)=>a.nome.localeCompare(b.nome));
   return `
   <div class="card">
-    <div class="field"><label>Nome do aluno (opcional)</label><input id="rfNome" placeholder="Ex: João"></div>
-    <div class="field"><label>CPF (opcional)</label><input id="rfCpf" placeholder="000.000.000-00" oninput="this.value=maskCPF(this.value)"></div>
+    <div class="field"><label>Aluno</label>
+      <select id="rfNome">
+        <option value="">Todos os alunos</option>
+        ${alunosOrdenados.map(a=>`<option value="${a.id}">${a.nome}${a.dataDesativacao?' (inativo)':''}</option>`).join('')}
+      </select>
+    </div>
     <div class="field"><label>Data inicial</label><input id="rfDataIni2" type="date"></div>
     <div class="field"><label>Data final</label><input id="rfDataFim2" type="date"></div>
     <button class="btn btn-primary" onclick="gerarRelatorioAluno()">Gerar relatório</button>
@@ -606,7 +655,7 @@ function relatorioAlunoForm(){
   <div id="reportResult"></div>
   `;
 }
-let lastReport = null; // {tipo, dados:[...], titulo}
+let lastReport = null;
 
 function gerarRelatorioAula(){
   const ini = document.getElementById('rfDataIni').value || '0000-01-01';
@@ -627,14 +676,10 @@ function gerarRelatorioAula(){
   document.getElementById('reportResult').innerHTML = html + exportButtons();
 }
 function gerarRelatorioAluno(){
-  const nome = (document.getElementById('rfNome').value||'').toLowerCase();
-  const cpf = onlyDigits(document.getElementById('rfCpf').value||'');
+  const alunoIdSel = document.getElementById('rfNome').value;
   const ini = document.getElementById('rfDataIni2').value || '0000-01-01';
   const fim = document.getElementById('rfDataFim2').value || '9999-12-31';
-  const alunos = state.alunos.filter(a=>
-    (!nome || a.nome.toLowerCase().includes(nome)) &&
-    (!cpf || onlyDigits(a.cpf).includes(cpf))
-  ).sort((a,b)=>a.nome.localeCompare(b.nome));
+  const alunos = state.alunos.filter(a=> !alunoIdSel || a.id===Number(alunoIdSel)).sort((a,b)=>a.nome.localeCompare(b.nome));
   const dados = alunos.map(al=>{
     const aulas = state.presencas.filter(p=>p.idAluno===al.id && p.status==='PRESENTE')
       .map(p=>state.aulas.find(a=>a.id===p.idAula))
@@ -657,34 +702,67 @@ function exportButtons(){
     <button class="btn btn-outline" onclick="exportarExcel()">📊 Exportar Excel</button>
   </div>`;
 }
+
+/* ---------- EXPORTAÇÃO PDF (com cabeçalho, colunas e cores) ---------- */
 function exportarPDF(){
   if(!lastReport) return;
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
-  let y = 18;
-  doc.setFontSize(16); doc.text('Passo Certo - Relatório', 14, y); y+=10;
-  doc.setFontSize(10);
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+
+  function desenharCabecalho(){
+    doc.setFillColor(31,58,52);
+    doc.rect(0,0,pageWidth,32,'F');
+    doc.setTextColor(244,239,226);
+    doc.setFont(undefined,'bold'); doc.setFontSize(16);
+    doc.text('Passo Certo', 14, 15);
+    doc.setFont(undefined,'normal'); doc.setFontSize(10);
+    const subtitulo = lastReport.tipo==='aula' ? 'Relatório de Aula x Alunos Presentes' : 'Relatório de Aluno x Aulas Presentes';
+    doc.text(subtitulo, 14, 23);
+    doc.setFontSize(8);
+    doc.text('Gerado em ' + new Date().toLocaleString('pt-BR'), pageWidth-14, 23, {align:'right'});
+  }
+  desenharCabecalho();
+
+  let head, body;
   if(lastReport.tipo==='aula'){
+    head = [['Aula', 'Data', 'Aluno presente']];
+    body = [];
     lastReport.dados.forEach(d=>{
-      if(y>270){doc.addPage(); y=18;}
-      doc.setFontSize(12); doc.text(`Aula de ${fmtDate(d.aula.data)}`, 14, y); y+=6;
-      doc.setFontSize(10);
-      const texto = d.nomes.length ? d.nomes.join(', ') : 'Nenhum presente';
-      const linhas = doc.splitTextToSize(texto, 180);
-      doc.text(linhas, 14, y); y += linhas.length*5 + 8;
+      if(d.nomes.length===0) body.push([d.aula.id, fmtDate(d.aula.data), '— nenhum presente —']);
+      else d.nomes.forEach((n,i)=> body.push([i===0? String(d.aula.id) : '', i===0? fmtDate(d.aula.data): '', n]));
     });
   } else {
+    head = [['Aluno', 'Data da aula presente']];
+    body = [];
     lastReport.dados.forEach(d=>{
-      if(y>270){doc.addPage(); y=18;}
-      doc.setFontSize(12); doc.text(d.aluno.nome, 14, y); y+=6;
-      doc.setFontSize(10);
-      const texto = d.aulas.length ? d.aulas.map(a=>fmtDate(a.data)).join(', ') : 'Nenhuma presença';
-      const linhas = doc.splitTextToSize(texto, 180);
-      doc.text(linhas, 14, y); y += linhas.length*5 + 8;
+      if(d.aulas.length===0) body.push([d.aluno.nome, '— nenhuma presença —']);
+      else d.aulas.forEach((a,i)=> body.push([i===0? d.aluno.nome : '', fmtDate(a.data)]));
     });
+  }
+
+  doc.autoTable({
+    head, body,
+    startY: 40,
+    theme: 'grid',
+    headStyles: { fillColor: [201,154,59], textColor: [58,44,11], fontStyle:'bold', fontSize: 10 },
+    alternateRowStyles: { fillColor: [250,246,238] },
+    styles: { fontSize: 9, cellPadding: 5, textColor: [34,49,44], lineColor: [228,220,201] },
+    margin: { left:14, right:14, top: 40 },
+    didDrawPage: function(){ if(doc.internal.getCurrentPageInfo().pageNumber>1) desenharCabecalho(); }
+  });
+
+  const totalPages = doc.internal.getNumberOfPages();
+  for(let i=1;i<=totalPages;i++){
+    doc.setPage(i);
+    doc.setFontSize(8); doc.setTextColor(120,120,120); doc.setFont(undefined,'normal');
+    doc.text(`Página ${i} de ${totalPages}`, pageWidth-14, pageHeight-8, {align:'right'});
+    doc.text('Passo Certo · relatório de presença', 14, pageHeight-8);
   }
   doc.save('passo-certo-relatorio.pdf');
 }
+
 function exportarExcel(){
   if(!lastReport) return;
   let rows = [];
@@ -695,10 +773,10 @@ function exportarExcel(){
       else d.nomes.forEach(n=> rows.push([d.aula.id, fmtDate(d.aula.data), n]));
     });
   } else {
-    rows.push(['Aluno','CPF','Data da aula presente']);
+    rows.push(['Aluno','Data da aula presente']);
     lastReport.dados.forEach(d=>{
-      if(d.aulas.length===0) rows.push([d.aluno.nome, d.aluno.cpf, '']);
-      else d.aulas.forEach(a=> rows.push([d.aluno.nome, d.aluno.cpf, fmtDate(a.data)]));
+      if(d.aulas.length===0) rows.push([d.aluno.nome, '']);
+      else d.aulas.forEach(a=> rows.push([d.aluno.nome, fmtDate(a.data)]));
     });
   }
   const ws = XLSX.utils.aoa_to_sheet(rows);
@@ -707,11 +785,45 @@ function exportarExcel(){
   XLSX.writeFile(wb, 'passo-certo-relatorio.xlsx');
 }
 
-/* ---------- BACKUP ---------- */
+/* ---------- CONFIGURAÇÕES / NUVEM ---------- */
+function openConfiguracoes(){
+  const cfg = loadFirebaseConfig();
+  showSheet(`
+    <div class="sheet-head"><h2>Nuvem (Firebase)</h2><button class="close-x" onclick="closeSheet()">✕</button></div>
+    <p class="small">Conecte um banco de dados gratuito na nuvem (Firebase) para não depender só deste celular. Status: <strong>${fb.ready?'🟢 Conectado':(fb.error?'🔴 Erro ao conectar':'⚪ Não conectado')}</strong></p>
+    ${fb.error?`<div class="msg error">${fb.error}</div>`:''}
+    <div class="field"><label>Cole aqui o firebaseConfig copiado do console do Firebase</label>
+      <textarea id="fbConfigInput" rows="7" placeholder='{ apiKey: "...", authDomain: "...", projectId: "...", storageBucket: "...", messagingSenderId: "...", appId: "..." }'>${cfg?JSON.stringify(cfg,null,2):''}</textarea>
+    </div>
+    <div id="fbMsg"></div>
+    <button class="btn btn-primary" onclick="salvarConfigFirebase()">Salvar e conectar</button>
+    ${fb.ready?`
+    <div class="btn-row" style="margin-top:10px">
+      <button class="btn btn-outline" onclick="forcarSyncNuvem()">🔄 Puxar da nuvem</button>
+      <button class="btn btn-outline" onclick="pushTudo().then(()=>{ document.getElementById('fbMsg').innerHTML='<div class=\\'msg ok\\'>Dados enviados para a nuvem.</div>'; })">⬆️ Enviar local</button>
+    </div>`:''}
+  `);
+}
+function salvarConfigFirebase(){
+  const txt = document.getElementById('fbConfigInput').value.trim();
+  const msg = document.getElementById('fbMsg');
+  let cfg;
+  try{ cfg = JSON.parse(txt); }
+  catch(e){
+    try{ cfg = new Function('return (' + txt + ')')(); }
+    catch(e2){ msg.innerHTML = '<div class="msg error">Não consegui entender o texto colado. Copie exatamente o bloco firebaseConfig do console do Firebase.</div>'; return; }
+  }
+  saveFirebaseConfig(cfg);
+  fb.initStarted = false; fb.ready = false; fb.error = null;
+  msg.innerHTML = '<div class="msg ok">Configuração salva. Conectando...</div>';
+  initFirebaseIfConfigured().then(()=>{ closeSheet(); render(); });
+}
+
+/* ---------- BACKUP MANUAL (arquivo) ---------- */
 function openBackup(){
   showSheet(`
-    <div class="sheet-head"><h2>Backup dos dados</h2><button class="close-x" onclick="closeSheet()">✕</button></div>
-    <p class="small">Seus dados ficam salvos apenas neste aparelho e neste navegador. Faça backup regularmente para não perder informações caso troque de celular ou limpe os dados do navegador.</p>
+    <div class="sheet-head"><h2>Backup manual</h2><button class="close-x" onclick="closeSheet()">✕</button></div>
+    <p class="small">Além da nuvem, você pode baixar um arquivo com todos os dados a qualquer momento.</p>
     <button class="btn btn-primary" onclick="exportarBackup()">⬇️ Baixar backup (.json)</button>
     <div class="divider"></div>
     <label class="field"><label>Restaurar backup</label>
@@ -737,7 +849,7 @@ function restaurarBackup(){
       const data = JSON.parse(e.target.result);
       if(!confirm('Isso vai substituir os dados atuais pelos dados do backup. Continuar?')) return;
       state.alunos = data.alunos||[]; state.aulas = data.aulas||[]; state.presencas = data.presencas||[];
-      persist(); closeSheet(); render();
+      persist(); if(fb.ready) pushTudo(); closeSheet(); render();
     }catch(err){ alert('Arquivo de backup inválido.'); }
   };
   reader.readAsText(file);
@@ -753,6 +865,7 @@ function showSheet(html){
 function closeSheet(){ const ov = document.getElementById('overlay'); if(ov) ov.remove(); }
 
 render();
+if(state.auth && state.session) initFirebaseIfConfigured();
 </script>
 </body>
 </html>
