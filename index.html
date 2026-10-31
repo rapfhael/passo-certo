@@ -176,6 +176,8 @@
   }
   .toggle-pill.on{background:var(--success);border-color:var(--success);color:#fff;}
 
+  .chk{width:20px;height:20px;accent-color:var(--primary);flex-shrink:0;}
+  .qtd{width:62px;padding:8px 6px;border:1px solid var(--border);border-radius:8px;text-align:center;font-size:14px;background:var(--surface);color:var(--ink);}
   .stat-row{display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;}
   .stat{flex:1;min-width:90px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px;text-align:center;}
   .stat .num{font-family:var(--font-display);font-size:20px;color:var(--primary);}
@@ -694,6 +696,7 @@ let chamadaSearch = '';
 let chamadaMarcados = null;
 let aulaTab = 'presenca';
 let lastAulaView = null;
+let treinoQtd = {};
 function aulaFinalizada(aulaId){ return state.presencas.some(p=>p.idAula===aulaId); }
 function alunosDaChamada(aula){
   const idsExistentes = new Set(state.presencas.filter(p=>p.idAula===aula.id).map(p=>p.idAluno));
@@ -704,7 +707,13 @@ function nomeTreino(id){ const t = state.treinos.find(x=>x.id===id); return t ? 
 function viewChamada(){
   const aula = state.aulas.find(a=>a.id===state.currentAulaId);
   if(!aula) return `<div class="empty"><p>Aula não encontrada.</p></div>`;
-  if(lastAulaView!==aula.id){ lastAulaView=aula.id; aulaTab='presenca'; chamadaSearch=''; chamadaMarcados=null; }
+  if(lastAulaView!==aula.id){
+    lastAulaView=aula.id; aulaTab='presenca'; chamadaSearch=''; chamadaMarcados=null;
+    const merged = {};
+    (aula.treinos||[]).forEach(i=>{ merged[i.idTreino] = (merged[i.idTreino]||0) + (i.quantidade||1); });
+    aula.treinos = Object.keys(merged).map(k=>({idTreino:Number(k), quantidade:merged[k]}));
+    treinoQtd = Object.assign({}, merged);
+  }
   const existentes = state.presencas.filter(p=>p.idAula===aula.id);
   if(chamadaMarcados===null){
     chamadaMarcados = new Set(existentes.filter(p=>p.status==='PRESENTE').map(p=>p.idAluno));
@@ -742,17 +751,25 @@ function viewChamada(){
   <div style="height:14px"></div>
   <button class="btn btn-secondary" onclick="confirmarFinalizar(${aula.id})">${finalizada?'Salvar alterações da aula':'Finalizar aula'}</button>`;
 
-  const treinosHTML = `
-  ${treinosAula.length===0 ? `<div class="empty"><div class="ic">🏋️</div><p>Nenhum treino adicionado a esta aula.</p></div>` :
-    treinosAula.map((it,i)=>`
-    <div class="list-item">
-      <div style="flex:1"><div class="name">${esc(nomeTreino(it.idTreino))}</div>
-      <div class="meta">${it.quantidade} ${it.quantidade===1?'repetição':'repetições'}</div></div>
-      <button class="icon-btn" style="background:#E7F5EE;color:var(--primary)" onclick="openTreinoAula(${i})" title="Editar">✏️</button>
-      <button class="icon-btn" style="background:#F1E4DF;color:var(--danger)" onclick="removerTreinoAula(${i})" title="Remover">✕</button>
-    </div>`).join('')}
-  <button class="btn btn-primary" style="margin-top:6px" onclick="openTreinoAula(null)">+ Adicionar treino</button>
-  <p class="small" style="margin-top:10px">Os treinos são salvos automaticamente.</p>`;
+  const listaT = treinosListados(aula);
+  const selIds = new Set(treinosAula.map(i=>i.idTreino));
+  const todosSel = listaT.length>0 && listaT.every(t=>selIds.has(t.id));
+  const treinosHTML = listaT.length===0 ? `
+    <div class="empty"><div class="ic">🏋️</div><p>Nenhum treino ativo cadastrado.</p></div>
+    <button class="btn btn-primary" onclick="goTo('treinos')">Cadastrar treinos</button>` : `
+  <div class="check-row">
+    <label style="display:flex;align-items:center;gap:10px;flex:1;cursor:pointer"><input type="checkbox" class="chk" ${todosSel?'checked':''} onchange="toggleTodosTreinos()"><strong>Selecionar todos</strong></label>
+    <span class="small">${selIds.size} de ${listaT.length}</span>
+  </div>
+  ${listaT.map(t=>{
+    const on = selIds.has(t.id);
+    const q = treinoQtd[t.id] || 1;
+    return `<div class="check-row ${on?'presente':''}">
+      <label style="display:flex;align-items:center;gap:10px;flex:1;cursor:pointer"><input type="checkbox" class="chk" ${on?'checked':''} onchange="toggleTreinoSel(${t.id})"><span>${esc(t.nome)}${t.dataDesativacao?' <span class="small">(inativo)</span>':''}</span></label>
+      <div style="display:flex;align-items:center;gap:6px"><input id="qtd_${t.id}" class="qtd" type="number" inputmode="numeric" min="1" value="${q}" onchange="setQtdTreino(${t.id}, this.value, this)"><span class="small">rep.</span></div>
+    </div>`;
+  }).join('')}
+  <p class="small" style="margin-top:10px">Só os treinos marcados fazem parte da aula. As alterações são salvas automaticamente, inclusive em aulas já finalizadas.</p>`;
 
   return cabecalho + (aulaTab==='presenca' ? presencaHTML : treinosHTML);
 }
@@ -777,43 +794,36 @@ function salvarEdicaoAula(id){
   persist(); pushAula(aula); closeSheet(); renderScreen();
 }
 
-function openTreinoAula(idx){
-  const aula = state.aulas.find(a=>a.id===state.currentAulaId);
-  const itens = aula.treinos || [];
-  const atual = idx!==null ? itens[idx] : null;
-  const opcoes = state.treinos.filter(t=>!t.dataDesativacao || (atual && atual.idTreino===t.id)).sort((a,b)=>a.nome.localeCompare(b.nome));
-  if(opcoes.length===0){
-    showSheet(`
-      <div class="sheet-head"><h2>Adicionar treino</h2><button class="close-x" onclick="closeSheet()">✕</button></div>
-      <p>Nenhum treino ativo cadastrado. Cadastre os treinos primeiro na tela inicial, em "Treinos".</p>
-      <button class="btn btn-primary" onclick="closeSheet(); goTo('treinos')">Ir para Treinos</button>
-    `);
-    return;
-  }
-  showSheet(`
-    <div class="sheet-head"><h2>${atual?'Editar treino da aula':'Adicionar treino'}</h2><button class="close-x" onclick="closeSheet()">✕</button></div>
-    <div id="taMsg"></div>
-    <div class="field"><label>Treino</label>
-      <select id="taTreino">${opcoes.map(t=>`<option value="${t.id}" ${atual&&atual.idTreino===t.id?'selected':''}>${esc(t.nome)}${t.dataDesativacao?' (inativo)':''}</option>`).join('')}</select>
-    </div>
-    <div class="field"><label>Quantidade de repetições *</label><input id="taQtd" type="number" inputmode="numeric" min="1" value="${atual?atual.quantidade:''}" placeholder="Ex: 15"></div>
-    <button class="btn btn-primary" onclick="salvarTreinoAula(${idx===null?'null':idx})">Salvar</button>
-  `);
+function treinosListados(aula){
+  const selIds = new Set((aula.treinos||[]).map(i=>i.idTreino));
+  return state.treinos.filter(t=>!t.dataDesativacao || selIds.has(t.id)).sort((a,b)=>a.nome.localeCompare(b.nome));
 }
-function salvarTreinoAula(idx){
-  const aula = state.aulas.find(a=>a.id===state.currentAulaId);
-  const idTreino = Number(document.getElementById('taTreino').value);
-  const q = parseInt(document.getElementById('taQtd').value, 10);
-  if(!q || q<1){ document.getElementById('taMsg').innerHTML='<div class="msg error">Informe a quantidade de repetições (número maior que zero).</div>'; return; }
-  aula.treinos = aula.treinos || [];
-  if(idx===null) aula.treinos.push({idTreino, quantidade:q}); else aula.treinos[idx] = {idTreino, quantidade:q};
-  persist(); pushAula(aula); closeSheet(); renderScreen();
-}
-function removerTreinoAula(idx){
-  if(!confirm('Remover este treino da aula?')) return;
-  const aula = state.aulas.find(a=>a.id===state.currentAulaId);
-  aula.treinos.splice(idx,1);
+function aplicarSelecaoTreinos(aula, ids){
+  const lista = treinosListados(aula);
+  aula.treinos = lista.filter(t=>ids.has(t.id)).map(t=>({idTreino:t.id, quantidade: treinoQtd[t.id] || 1}));
   persist(); pushAula(aula); renderScreen();
+}
+function aulaAtual(){ return state.aulas.find(a=>a.id===state.currentAulaId); }
+function toggleTreinoSel(id){
+  const aula = aulaAtual();
+  const ids = new Set((aula.treinos||[]).map(i=>i.idTreino));
+  if(ids.has(id)) ids.delete(id); else ids.add(id);
+  aplicarSelecaoTreinos(aula, ids);
+}
+function toggleTodosTreinos(){
+  const aula = aulaAtual();
+  const lista = treinosListados(aula);
+  const ids = new Set((aula.treinos||[]).map(i=>i.idTreino));
+  const todos = lista.length>0 && lista.every(t=>ids.has(t.id));
+  aplicarSelecaoTreinos(aula, todos ? new Set() : new Set(lista.map(t=>t.id)));
+}
+function setQtdTreino(id, valor, el){
+  let q = parseInt(valor, 10);
+  if(!q || q<1){ q = 1; if(el) el.value = 1; }
+  treinoQtd[id] = q;
+  const aula = aulaAtual();
+  const it = (aula.treinos||[]).find(i=>i.idTreino===id);
+  if(it){ it.quantidade = q; persist(); pushAula(aula); }
 }
 
 function confirmarFinalizar(aulaId){
