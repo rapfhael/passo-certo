@@ -213,12 +213,13 @@ const DB = {
   get(key, def){ try{ const v = localStorage.getItem(key); return v ? JSON.parse(v) : def; }catch(e){ return def; } },
   set(key, val){ localStorage.setItem(key, JSON.stringify(val)); }
 };
-const KEYS = { alunos:'pc_alunos', aulas:'pc_aulas', presencas:'pc_presencas', usuarios:'pc_usuarios', fbConfig:'pc_firebase_config' };
+const KEYS = { alunos:'pc_alunos', aulas:'pc_aulas', presencas:'pc_presencas', usuarios:'pc_usuarios', fbConfig:'pc_firebase_config', treinos:'pc_treinos', syncCode:'pc_sync_code', syncedSpace:'pc_synced_space', preSync:'pc_pre_sync_backup' };
 
 let state = {
   alunos: DB.get(KEYS.alunos, []),
   aulas: DB.get(KEYS.aulas, []),
   presencas: DB.get(KEYS.presencas, []),
+  treinos: DB.get(KEYS.treinos, []),
   usuarios: DB.get(KEYS.usuarios, null) || [{codigo:0, nome:'Administrador', senhaHash:MASTER_HASH, dataDesativacao:null}],
   session: sessionStorage.getItem('pc_session') === '1',
   sessionUserCodigo: sessionStorage.getItem('pc_session_user') ? Number(sessionStorage.getItem('pc_session_user')) : null,
@@ -234,6 +235,7 @@ function persist(){
   DB.set(KEYS.aulas, state.aulas);
   DB.set(KEYS.presencas, state.presencas);
   DB.set(KEYS.usuarios, state.usuarios);
+  DB.set(KEYS.treinos, state.treinos);
 }
 persist();
 function nextId(arr, campo){ campo = campo || 'id'; return arr.length ? Math.max(...arr.map(x=>x[campo])) + 1 : 1; }
@@ -247,6 +249,7 @@ function todayISO(){
   return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 }
 function fmtNum(n){ if(!isFinite(n)) return '0'; return Number.isInteger(n) ? String(n) : n.toFixed(1); }
+function esc(v){ return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function currentUser(){ return state.usuarios.find(u=>u.codigo===state.sessionUserCodigo); }
 
 /* ============ FIREBASE (nuvem gratuita, opcional) ============ */
@@ -269,27 +272,46 @@ async function initFirebaseIfConfigured(){
     await syncInicial();
   }catch(e){
     console.error('Falha ao conectar ao Firebase', e);
-    fb.error = e.message; fb.ready = false;
+    fb.error = (e && e.code==='permission-denied') ? 'Sem permissão no Firestore. Atualize as regras de segurança no console do Firebase (aba Regras) e tente de novo.' : (e && e.message); fb.ready = false;
   }
 }
-function colAlunos(){ return fb.db.collection('users').doc(fb.uid).collection('alunos'); }
-function colAulas(){ return fb.db.collection('users').doc(fb.uid).collection('aulas'); }
-function colPresencas(){ return fb.db.collection('users').doc(fb.uid).collection('presencas'); }
-function colUsuarios(){ return fb.db.collection('users').doc(fb.uid).collection('usuarios'); }
+function loadSyncCode(){ return DB.get(KEYS.syncCode, null); }
+function saveSyncCode(c){ DB.set(KEYS.syncCode, c); }
+function limparSyncCode(txt){ return (txt||'').trim().replace(/[\s\/\\.]/g,''); }
+function baseDoc(){
+  const code = loadSyncCode();
+  return code ? fb.db.collection('spaces').doc(code) : fb.db.collection('users').doc(fb.uid);
+}
+function colAlunos(){ return baseDoc().collection('alunos'); }
+function colAulas(){ return baseDoc().collection('aulas'); }
+function colPresencas(){ return baseDoc().collection('presencas'); }
+function colUsuarios(){ return baseDoc().collection('usuarios'); }
+function colTreinos(){ return baseDoc().collection('treinos'); }
 
 async function syncInicial(){
-  const [snapA, snapU, snapP, snapUs] = await Promise.all([colAlunos().get(), colAulas().get(), colPresencas().get(), colUsuarios().get()]);
-  const cloudVazio = snapA.empty && snapU.empty && snapP.empty && snapUs.empty;
-  if(cloudVazio && (state.alunos.length || state.aulas.length || state.presencas.length || state.usuarios.length)){
+  const [snapA, snapU, snapP, snapUs, snapT] = await Promise.all([colAlunos().get(), colAulas().get(), colPresencas().get(), colUsuarios().get(), colTreinos().get()]);
+  const cloudVazio = snapA.empty && snapU.empty && snapP.empty && snapUs.empty && snapT.empty;
+  const localTemDados = state.alunos.length || state.aulas.length || state.presencas.length || state.treinos.length;
+  const spaceId = loadSyncCode() || ('uid:' + fb.uid);
+  const primeiraVez = DB.get(KEYS.syncedSpace, null) !== spaceId;
+  let avisar = false;
+  if(cloudVazio && (localTemDados || state.usuarios.length)){
     await pushTudo();
   } else {
+    if(primeiraVez && localTemDados && !cloudVazio){
+      DB.set(KEYS.preSync, {alunos:state.alunos, aulas:state.aulas, presencas:state.presencas, usuarios:state.usuarios, treinos:state.treinos, salvoEm:new Date().toISOString()});
+      avisar = true;
+    }
     if(!snapA.empty) state.alunos = snapA.docs.map(d=>d.data());
     if(!snapU.empty) state.aulas = snapU.docs.map(d=>d.data());
     if(!snapP.empty) state.presencas = snapP.docs.map(d=>d.data());
     if(!snapUs.empty) state.usuarios = snapUs.docs.map(d=>d.data());
+    if(!snapT.empty) state.treinos = snapT.docs.map(d=>d.data());
     persist();
   }
+  DB.set(KEYS.syncedSpace, spaceId);
   render();
+  if(avisar) alert('Os dados deste aparelho foram substituídos pelos dados da nuvem. Uma cópia dos dados anteriores foi guardada: Início → Backup manual → "Baixar cópia anterior à sincronização".');
 }
 async function pushTudo(){
   if(!fb.ready) return;
@@ -298,19 +320,22 @@ async function pushTudo(){
   state.aulas.forEach(a=> ops.push(colAulas().doc(String(a.id)).set(a)));
   state.presencas.forEach(p=> ops.push(colPresencas().doc(String(p.id)).set(p)));
   state.usuarios.forEach(u=> ops.push(colUsuarios().doc(String(u.codigo)).set(u)));
+  state.treinos.forEach(t=> ops.push(colTreinos().doc(String(t.id)).set(t)));
   await Promise.all(ops);
 }
 function pushAluno(a){ if(fb.ready) colAlunos().doc(String(a.id)).set(a).catch(e=>console.error(e)); }
 function pushAula(a){ if(fb.ready) colAulas().doc(String(a.id)).set(a).catch(e=>console.error(e)); }
 function pushPresencas(list){ if(!fb.ready) return; list.forEach(p=> colPresencas().doc(String(p.id)).set(p).catch(e=>console.error(e))); }
 function pushUsuario(u){ if(fb.ready) colUsuarios().doc(String(u.codigo)).set(u).catch(e=>console.error(e)); }
+function pushTreino(t){ if(fb.ready) colTreinos().doc(String(t.id)).set(t).catch(e=>console.error(e)); }
 async function forcarSyncNuvem(){
   if(!fb.ready) return;
-  const [snapA, snapU, snapP, snapUs] = await Promise.all([colAlunos().get(), colAulas().get(), colPresencas().get(), colUsuarios().get()]);
+  const [snapA, snapU, snapP, snapUs, snapT] = await Promise.all([colAlunos().get(), colAulas().get(), colPresencas().get(), colUsuarios().get(), colTreinos().get()]);
   state.alunos = snapA.docs.map(d=>d.data());
   state.aulas = snapU.docs.map(d=>d.data());
   state.presencas = snapP.docs.map(d=>d.data());
   state.usuarios = snapUs.docs.map(d=>d.data());
+  state.treinos = snapT.docs.map(d=>d.data());
   persist(); closeSheet(); render();
 }
 
@@ -360,12 +385,15 @@ function goTo(screen){
 }
 function renderScreen(){
   const c = document.getElementById('content');
+  const ae = document.activeElement; const aid = ae && ae.id; const pos = ae && ae.selectionStart;
   if(state.screen==='home') c.innerHTML = viewHome();
   else if(state.screen==='alunos') c.innerHTML = viewAlunos();
   else if(state.screen==='historico') c.innerHTML = viewHistorico();
   else if(state.screen==='chamada') c.innerHTML = viewChamada();
   else if(state.screen==='relatorios') c.innerHTML = viewRelatorios();
   else if(state.screen==='usuarios') c.innerHTML = viewUsuarios();
+  else if(state.screen==='treinos') c.innerHTML = viewTreinos();
+  if(aid){ const el = document.getElementById(aid); if(el){ el.focus(); try{ el.setSelectionRange(pos,pos); }catch(e){} } }
 }
 
 /* ---------- LOGIN ---------- */
@@ -410,8 +438,9 @@ function viewHome(){
     <div class="stat"><div class="num">${totalAulas}</div><div class="lbl">Aulas registradas</div></div>
   </div>
   <div class="menu-card" onclick="goTo('alunos')"><div class="ic">👥</div><div class="txt"><strong>Alunos</strong><span>Cadastrar, editar e pesquisar</span></div></div>
+  <div class="menu-card" onclick="goTo('treinos')"><div class="ic">🏋️</div><div class="txt"><strong>Treinos</strong><span>Cadastrar e desativar tipos de treino</span></div></div>
   <div class="menu-card" onclick="openNovaAula()"><div class="ic">➕</div><div class="txt"><strong>Nova aula</strong><span>Iniciar chamada de hoje</span></div></div>
-  <div class="menu-card" onclick="goTo('historico')"><div class="ic">🗂️</div><div class="txt"><strong>Histórico de aulas</strong><span>Ver, excluir e reabrir chamadas</span></div></div>
+  <div class="menu-card" onclick="goTo('historico')"><div class="ic">🗂️</div><div class="txt"><strong>Histórico de aulas</strong><span>Ver, editar e excluir aulas</span></div></div>
   <div class="menu-card" onclick="goTo('relatorios')"><div class="ic">📊</div><div class="txt"><strong>Relatórios</strong><span>Consultar e exportar</span></div></div>
   ${souMaster?`<div class="menu-card" onclick="goTo('usuarios')"><div class="ic">👤</div><div class="txt"><strong>Usuários</strong><span>Criar e desativar usuários do sistema</span></div></div>`:''}
   <div class="menu-card" onclick="openConfiguracoes()"><div class="ic">☁️</div><div class="txt"><strong>Nuvem (Firebase)</strong><span>${fb.ready?'Conectado — dados protegidos na nuvem':'Não conectado — configurar backup automático'}</span></div></div>
@@ -487,7 +516,7 @@ function viewAlunos(){
   return `
   <div class="search-box">
     <span class="ic">🔍</span>
-    <input placeholder="Buscar por nome ou celular" value="${alunoSearch}" oninput="alunoSearch=this.value; renderScreen()">
+    <input id="alunoSearchInput" placeholder="Buscar por nome ou celular" value="${alunoSearch}" oninput="alunoSearch=this.value; renderScreen()">
   </div>
   ${lista.length===0 ? `<div class="empty"><div class="ic">👥</div><p>Nenhum aluno encontrado. Toque em + para cadastrar.</p></div>` :
     lista.map(a=>`
@@ -552,7 +581,7 @@ function openNovaAula(){
 function criarAula(){
   const data = document.getElementById('naData').value || todayISO();
   const obs = document.getElementById('naObs').value.trim();
-  const aula = {id: nextId(state.aulas), data, observacoes: obs};
+  const aula = {id: nextId(state.aulas), data, observacoes: obs, treinos: []};
   state.aulas.push(aula);
   persist(); pushAula(aula); closeSheet();
   state.currentAulaId = aula.id;
@@ -571,7 +600,7 @@ function viewHistorico(){
       return `<div class="list-item">
         <div style="flex:1;cursor:pointer" onclick="abrirAula(${au.id})">
           <div class="name">Aula de ${fmtDate(au.data)}</div>
-          <div class="meta">${pres.length? presentes+' presentes de '+pres.length : 'Chamada não finalizada'}${au.observacoes?' · '+au.observacoes:''}</div>
+          <div class="meta">${pres.length? presentes+' presentes de '+pres.length : 'Chamada não finalizada'}${au.observacoes?' · '+esc(au.observacoes):''}${(au.treinos&&au.treinos.length)?' · '+au.treinos.length+' treino(s)':''}</div>
         </div>
         <button class="icon-btn" style="background:#F1E4DF;color:var(--danger)" onclick="event.stopPropagation(); confirmarExcluirAula(${au.id})" title="Excluir aula">🗑️</button>
       </div>`;
@@ -603,65 +632,218 @@ function excluirAula(id){
   closeSheet(); renderScreen();
 }
 
-/* ---------- CHAMADA ---------- */
+/* ---------- TREINOS (cadastro) ---------- */
+let editTreinoId = null;
+function viewTreinos(){
+  const lista = [...state.treinos].sort((a,b)=>{
+    if(!!a.dataDesativacao !== !!b.dataDesativacao) return a.dataDesativacao ? 1 : -1;
+    return a.nome.localeCompare(b.nome);
+  });
+  return `
+  <button class="btn btn-outline" style="margin-bottom:12px" onclick="goTo('home')">← Voltar</button>
+  <h2 style="margin-bottom:12px">Treinos</h2>
+  ${lista.length===0 ? `<div class="empty"><div class="ic">🏋️</div><p>Nenhum treino cadastrado. Toque em + para cadastrar.</p></div>` :
+    lista.map(t=>`
+    <div class="list-item" onclick="openTreinoForm(${t.id})">
+      <div><div class="name">${esc(t.nome)}</div>
+      <div class="meta">${t.descricao?esc(t.descricao):'Sem descrição'}${t.dataDesativacao?' · desativado em '+fmtDate(t.dataDesativacao):''}</div></div>
+      <span class="tag ${t.dataDesativacao?'inativo':'ativo'}">${t.dataDesativacao?'Inativo':'Ativo'}</span>
+    </div>`).join('')}
+  <button class="fab" onclick="openTreinoForm(null)">+</button>
+  `;
+}
+function openTreinoForm(id){
+  editTreinoId = id;
+  const t = id ? state.treinos.find(x=>x.id===id) : null;
+  showSheet(`
+    <div class="sheet-head"><h2>${t?'Editar treino':'Novo treino'}</h2><button class="close-x" onclick="closeSheet()">✕</button></div>
+    <div id="treinoMsg"></div>
+    <div class="field"><label>Nome do treino *</label><input id="tNome" value="${t?esc(t.nome):''}" placeholder="Ex: Agachamento, Corrida leve"></div>
+    <div class="field"><label>Descrição (opcional)</label><textarea id="tDesc" rows="3" style="font-family:var(--font-body);font-size:14.5px">${t&&t.descricao?esc(t.descricao):''}</textarea></div>
+    <button class="btn btn-primary" onclick="salvarTreino()">Salvar</button>
+    ${t?`<div class="btn-row" style="margin-top:10px">
+      <button class="btn ${t.dataDesativacao?'btn-outline':'btn-danger'}" onclick="toggleAtivoTreino(${t.id})">${t.dataDesativacao?'Reativar treino':'Desativar treino'}</button>
+    </div>`:''}
+  `);
+}
+function salvarTreino(){
+  const nome = document.getElementById('tNome').value.trim();
+  const descricao = document.getElementById('tDesc').value.trim();
+  const msg = document.getElementById('treinoMsg');
+  if(!nome){ msg.innerHTML='<div class="msg error">Informe o nome do treino.</div>'; return; }
+  const dup = state.treinos.find(x=>x.nome.toLowerCase()===nome.toLowerCase() && x.id!==editTreinoId);
+  if(dup){ msg.innerHTML='<div class="msg error">Já existe um treino com esse nome.</div>'; return; }
+  let t;
+  if(editTreinoId){
+    t = state.treinos.find(x=>x.id===editTreinoId);
+    Object.assign(t, {nome, descricao});
+  } else {
+    t = {id: nextId(state.treinos), nome, descricao, dataDesativacao:null};
+    state.treinos.push(t);
+  }
+  persist(); pushTreino(t); closeSheet(); renderScreen();
+}
+function toggleAtivoTreino(id){
+  const t = state.treinos.find(x=>x.id===id);
+  t.dataDesativacao = t.dataDesativacao ? null : todayISO();
+  persist(); pushTreino(t); closeSheet(); renderScreen();
+}
+
+/* ---------- AULA: PRESENÇA + TREINOS ---------- */
 let chamadaSearch = '';
 let chamadaMarcados = null;
+let aulaTab = 'presenca';
+let lastAulaView = null;
+function aulaFinalizada(aulaId){ return state.presencas.some(p=>p.idAula===aulaId); }
+function alunosDaChamada(aula){
+  const idsExistentes = new Set(state.presencas.filter(p=>p.idAula===aula.id).map(p=>p.idAluno));
+  return state.alunos.filter(a=>!a.dataDesativacao || idsExistentes.has(a.id));
+}
+function nomeTreino(id){ const t = state.treinos.find(x=>x.id===id); return t ? t.nome : 'Treino removido'; }
+
 function viewChamada(){
   const aula = state.aulas.find(a=>a.id===state.currentAulaId);
   if(!aula) return `<div class="empty"><p>Aula não encontrada.</p></div>`;
+  if(lastAulaView!==aula.id){ lastAulaView=aula.id; aulaTab='presenca'; chamadaSearch=''; chamadaMarcados=null; }
   const existentes = state.presencas.filter(p=>p.idAula===aula.id);
   if(chamadaMarcados===null){
     chamadaMarcados = new Set(existentes.filter(p=>p.status==='PRESENTE').map(p=>p.idAluno));
   }
-  const ativos = state.alunos.filter(a=>!a.dataDesativacao)
+  const finalizada = existentes.length>0;
+  const base = alunosDaChamada(aula);
+  const lista = base
     .filter(a=>!chamadaSearch || a.nome.toLowerCase().includes(chamadaSearch.toLowerCase()))
     .sort((a,b)=>a.nome.localeCompare(b.nome));
-  const totalPresentes = chamadaMarcados.size;
-  return `
-  <button class="btn btn-outline" style="margin-bottom:12px" onclick="chamadaMarcados=null; goTo('historico')">← Voltar</button>
-  <h2 style="margin-bottom:4px">Aula de ${fmtDate(aula.data)}</h2>
-  <p class="small" style="margin-bottom:12px">${aula.observacoes||'Sem observações'} · ${totalPresentes} presente(s) de ${state.alunos.filter(a=>!a.dataDesativacao).length} ativos</p>
-  <div class="search-box"><span class="ic">🔍</span><input placeholder="Buscar aluno" value="${chamadaSearch}" oninput="chamadaSearch=this.value; renderScreen()"></div>
-  ${ativos.length===0? `<div class="empty"><p>Nenhum aluno ativo cadastrado.</p></div>` :
-    ativos.map(a=>{
+  const treinosAula = aula.treinos || [];
+
+  const cabecalho = `
+  <button class="btn btn-outline" style="margin-bottom:12px" onclick="chamadaMarcados=null; lastAulaView=null; goTo('historico')">← Voltar</button>
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px">
+    <h2>Aula de ${fmtDate(aula.data)}</h2>
+    <span class="tag" style="${finalizada?'background:#E3F3EA;color:var(--success)':'background:#FFF3D6;color:#8A6A10'}">${finalizada?'Finalizada':'Em andamento'}</span>
+  </div>
+  <p class="small" style="margin-bottom:10px">${esc(aula.observacoes)||'Sem observações'}</p>
+  <button class="btn btn-outline" style="margin-bottom:12px" onclick="openEditarAula(${aula.id})">✏️ Editar data e observações</button>
+  <div class="chip-row">
+    <button class="chip ${aulaTab==='presenca'?'active':''}" onclick="aulaTab='presenca'; renderScreen()">Presença (${chamadaMarcados.size})</button>
+    <button class="chip ${aulaTab==='treinos'?'active':''}" onclick="aulaTab='treinos'; renderScreen()">Treinos (${treinosAula.length})</button>
+  </div>`;
+
+  const presencaHTML = `
+  <div class="search-box"><span class="ic">🔍</span><input id="chamadaSearchInput" placeholder="Buscar aluno" value="${esc(chamadaSearch)}" oninput="chamadaSearch=this.value; renderScreen()"></div>
+  ${lista.length===0? `<div class="empty"><p>Nenhum aluno encontrado.</p></div>` :
+    lista.map(a=>{
       const on = chamadaMarcados.has(a.id);
       return `<div class="check-row ${on?'presente':''}" onclick="toggleMarcado(${a.id})">
-        <span>${a.nome}</span>
+        <span>${esc(a.nome)}${a.dataDesativacao?' <span class="small">(inativo)</span>':''}</span>
         <span class="toggle-pill ${on?'on':''}">${on?'✓ Presente':'Ausente'}</span>
       </div>`;
     }).join('')}
   <div style="height:14px"></div>
-  <button class="btn btn-secondary" onclick="confirmarFinalizar(${aula.id})">Finalizar aula</button>
-  `;
+  <button class="btn btn-secondary" onclick="confirmarFinalizar(${aula.id})">${finalizada?'Salvar alterações da aula':'Finalizar aula'}</button>`;
+
+  const treinosHTML = `
+  ${treinosAula.length===0 ? `<div class="empty"><div class="ic">🏋️</div><p>Nenhum treino adicionado a esta aula.</p></div>` :
+    treinosAula.map((it,i)=>`
+    <div class="list-item">
+      <div style="flex:1"><div class="name">${esc(nomeTreino(it.idTreino))}</div>
+      <div class="meta">${it.quantidade} ${it.quantidade===1?'repetição':'repetições'}</div></div>
+      <button class="icon-btn" style="background:#E7F5EE;color:var(--primary)" onclick="openTreinoAula(${i})" title="Editar">✏️</button>
+      <button class="icon-btn" style="background:#F1E4DF;color:var(--danger)" onclick="removerTreinoAula(${i})" title="Remover">✕</button>
+    </div>`).join('')}
+  <button class="btn btn-primary" style="margin-top:6px" onclick="openTreinoAula(null)">+ Adicionar treino</button>
+  <p class="small" style="margin-top:10px">Os treinos são salvos automaticamente.</p>`;
+
+  return cabecalho + (aulaTab==='presenca' ? presencaHTML : treinosHTML);
 }
 function toggleMarcado(id){
   if(chamadaMarcados.has(id)) chamadaMarcados.delete(id); else chamadaMarcados.add(id);
   renderScreen();
 }
-function confirmarFinalizar(aulaId){
-  const ativos = state.alunos.filter(a=>!a.dataDesativacao);
-  const presentes = chamadaMarcados.size;
-  const ausentes = ativos.length - presentes;
+
+function openEditarAula(id){
+  const aula = state.aulas.find(a=>a.id===id);
   showSheet(`
-    <div class="sheet-head"><h2>Confirmar chamada</h2><button class="close-x" onclick="closeSheet()">✕</button></div>
-    <p>Você está prestes a gravar esta chamada definitivamente:</p>
+    <div class="sheet-head"><h2>Editar aula</h2><button class="close-x" onclick="closeSheet()">✕</button></div>
+    <div class="field"><label>Data da aula</label><input id="eaData" type="date" value="${aula.data}"></div>
+    <div class="field"><label>Observações (opcional)</label><textarea id="eaObs" rows="3" style="font-family:var(--font-body);font-size:14.5px">${esc(aula.observacoes)}</textarea></div>
+    <button class="btn btn-primary" onclick="salvarEdicaoAula(${id})">Salvar</button>
+  `);
+}
+function salvarEdicaoAula(id){
+  const aula = state.aulas.find(a=>a.id===id);
+  aula.data = document.getElementById('eaData').value || aula.data;
+  aula.observacoes = document.getElementById('eaObs').value.trim();
+  persist(); pushAula(aula); closeSheet(); renderScreen();
+}
+
+function openTreinoAula(idx){
+  const aula = state.aulas.find(a=>a.id===state.currentAulaId);
+  const itens = aula.treinos || [];
+  const atual = idx!==null ? itens[idx] : null;
+  const opcoes = state.treinos.filter(t=>!t.dataDesativacao || (atual && atual.idTreino===t.id)).sort((a,b)=>a.nome.localeCompare(b.nome));
+  if(opcoes.length===0){
+    showSheet(`
+      <div class="sheet-head"><h2>Adicionar treino</h2><button class="close-x" onclick="closeSheet()">✕</button></div>
+      <p>Nenhum treino ativo cadastrado. Cadastre os treinos primeiro na tela inicial, em "Treinos".</p>
+      <button class="btn btn-primary" onclick="closeSheet(); goTo('treinos')">Ir para Treinos</button>
+    `);
+    return;
+  }
+  showSheet(`
+    <div class="sheet-head"><h2>${atual?'Editar treino da aula':'Adicionar treino'}</h2><button class="close-x" onclick="closeSheet()">✕</button></div>
+    <div id="taMsg"></div>
+    <div class="field"><label>Treino</label>
+      <select id="taTreino">${opcoes.map(t=>`<option value="${t.id}" ${atual&&atual.idTreino===t.id?'selected':''}>${esc(t.nome)}${t.dataDesativacao?' (inativo)':''}</option>`).join('')}</select>
+    </div>
+    <div class="field"><label>Quantidade de repetições *</label><input id="taQtd" type="number" inputmode="numeric" min="1" value="${atual?atual.quantidade:''}" placeholder="Ex: 15"></div>
+    <button class="btn btn-primary" onclick="salvarTreinoAula(${idx===null?'null':idx})">Salvar</button>
+  `);
+}
+function salvarTreinoAula(idx){
+  const aula = state.aulas.find(a=>a.id===state.currentAulaId);
+  const idTreino = Number(document.getElementById('taTreino').value);
+  const q = parseInt(document.getElementById('taQtd').value, 10);
+  if(!q || q<1){ document.getElementById('taMsg').innerHTML='<div class="msg error">Informe a quantidade de repetições (número maior que zero).</div>'; return; }
+  aula.treinos = aula.treinos || [];
+  if(idx===null) aula.treinos.push({idTreino, quantidade:q}); else aula.treinos[idx] = {idTreino, quantidade:q};
+  persist(); pushAula(aula); closeSheet(); renderScreen();
+}
+function removerTreinoAula(idx){
+  if(!confirm('Remover este treino da aula?')) return;
+  const aula = state.aulas.find(a=>a.id===state.currentAulaId);
+  aula.treinos.splice(idx,1);
+  persist(); pushAula(aula); renderScreen();
+}
+
+function confirmarFinalizar(aulaId){
+  const aula = state.aulas.find(a=>a.id===aulaId);
+  const finalizada = aulaFinalizada(aulaId);
+  const total = alunosDaChamada(aula).length;
+  const presentes = chamadaMarcados.size;
+  const ausentes = total - presentes;
+  showSheet(`
+    <div class="sheet-head"><h2>${finalizada?'Salvar alterações':'Confirmar chamada'}</h2><button class="close-x" onclick="closeSheet()">✕</button></div>
+    <p>${finalizada?'Esta aula já estava finalizada. A chamada será atualizada com:':'Você está prestes a gravar esta chamada:'}</p>
     <div class="stat-row">
       <div class="stat"><div class="num">${presentes}</div><div class="lbl">Presentes</div></div>
       <div class="stat"><div class="num">${ausentes}</div><div class="lbl">Ausentes</div></div>
     </div>
-    <button class="btn btn-primary" onclick="finalizarAula(${aulaId})">Confirmar e gravar</button>
+    <button class="btn btn-primary" onclick="finalizarAula(${aulaId})">${finalizada?'Salvar alterações':'Confirmar e gravar'}</button>
     <button class="btn btn-outline" style="margin-top:10px" onclick="closeSheet()">Cancelar</button>
   `);
 }
 function finalizarAula(aulaId){
+  const aula = state.aulas.find(a=>a.id===aulaId);
+  const base = alunosDaChamada(aula);
   state.presencas = state.presencas.filter(p=>p.idAula!==aulaId);
-  const novos = state.alunos.filter(a=>!a.dataDesativacao).map(a=>({
+  const novos = base.map(a=>({
     id: `${aulaId}_${a.id}`,
     idAluno: a.id, idAula: aulaId,
     status: chamadaMarcados.has(a.id) ? 'PRESENTE' : 'AUSENTE'
   }));
   state.presencas.push(...novos);
-  persist(); pushPresencas(novos); closeSheet(); chamadaMarcados=null;
+  persist(); pushPresencas(novos); closeSheet(); chamadaMarcados=null; lastAulaView=null;
   state.screen='historico'; render();
 }
 
@@ -919,24 +1101,33 @@ function exportarExcel(){
 /* ---------- CONFIGURAÇÕES / NUVEM ---------- */
 function openConfiguracoes(){
   const cfg = loadFirebaseConfig();
+  const code = loadSyncCode() || '';
   showSheet(`
     <div class="sheet-head"><h2>Nuvem (Firebase)</h2><button class="close-x" onclick="closeSheet()">✕</button></div>
-    <p class="small">Conecte um banco de dados gratuito na nuvem (Firebase) para não depender só deste celular. Status: <strong>${fb.ready?'🟢 Conectado':(fb.error?'🔴 Erro ao conectar':'⚪ Não conectado')}</strong></p>
-    ${fb.error?`<div class="msg error">${fb.error}</div>`:''}
+    <p class="small">Conecte um banco de dados gratuito na nuvem (Firebase) para compartilhar os dados entre aparelhos. Status: <strong>${fb.ready?'🟢 Conectado':(fb.error?'🔴 Erro ao conectar':'⚪ Não conectado')}</strong></p>
+    ${fb.error?`<div class="msg error">${esc(fb.error)}</div>`:''}
     <div class="field"><label>Cole aqui o firebaseConfig copiado do console do Firebase</label>
-      <textarea id="fbConfigInput" rows="7" placeholder='{ apiKey: "...", authDomain: "...", projectId: "...", storageBucket: "...", messagingSenderId: "...", appId: "..." }'>${cfg?JSON.stringify(cfg,null,2):''}</textarea>
+      <textarea id="fbConfigInput" rows="7" style="font-family:'SF Mono',Consolas,monospace;font-size:12.5px" placeholder='{ apiKey: "...", authDomain: "...", projectId: "...", storageBucket: "...", messagingSenderId: "...", appId: "..." }'>${cfg?esc(JSON.stringify(cfg,null,2)):''}</textarea>
+    </div>
+    <div class="field"><label>Código de sincronização (use o MESMO em todos os aparelhos)</label>
+      <input id="fbSyncCode" value="${esc(code)}" placeholder="Ex: familia-silva-2026" autocapitalize="off" autocomplete="off">
+      <p class="small" style="margin-top:6px">Aparelhos com a mesma configuração e o mesmo código enxergam os mesmos dados. Escolha algo difícil de adivinhar (mínimo 6 caracteres, sem espaços).</p>
     </div>
     <div id="fbMsg"></div>
     <button class="btn btn-primary" onclick="salvarConfigFirebase()">Salvar e conectar</button>
     ${fb.ready?`
     <div class="btn-row" style="margin-top:10px">
       <button class="btn btn-outline" onclick="forcarSyncNuvem()">🔄 Puxar da nuvem</button>
-      <button class="btn btn-outline" onclick="pushTudo().then(()=>{ document.getElementById('fbMsg').innerHTML='<div class=\\'msg ok\\'>Dados enviados para a nuvem.</div>'; })">⬆️ Enviar local</button>
+      <button class="btn btn-outline" onclick="enviarLocalNuvem()">⬆️ Enviar local</button>
     </div>`:''}
   `);
 }
+function enviarLocalNuvem(){
+  pushTudo().then(()=>{ const m = document.getElementById('fbMsg'); if(m) m.innerHTML = '<div class="msg ok">Dados enviados para a nuvem.</div>'; });
+}
 function salvarConfigFirebase(){
   const txt = document.getElementById('fbConfigInput').value.trim();
+  const code = limparSyncCode(document.getElementById('fbSyncCode').value);
   const msg = document.getElementById('fbMsg');
   let cfg;
   try{ cfg = JSON.parse(txt); }
@@ -944,18 +1135,24 @@ function salvarConfigFirebase(){
     try{ cfg = new Function('return (' + txt + ')')(); }
     catch(e2){ msg.innerHTML = '<div class="msg error">Não consegui entender o texto colado. Copie exatamente o bloco firebaseConfig do console do Firebase.</div>'; return; }
   }
-  saveFirebaseConfig(cfg);
+  if(code.length<6){ msg.innerHTML = '<div class="msg error">Informe um código de sincronização com pelo menos 6 caracteres (sem espaços).</div>'; return; }
+  saveFirebaseConfig(cfg); saveSyncCode(code);
   fb.initStarted = false; fb.ready = false; fb.error = null;
   msg.innerHTML = '<div class="msg ok">Configuração salva. Conectando...</div>';
-  initFirebaseIfConfigured().then(()=>{ closeSheet(); render(); });
+  initFirebaseIfConfigured().then(()=>{
+    if(fb.error){ msg.innerHTML = '<div class="msg error">' + esc(fb.error) + '</div>'; }
+    else { closeSheet(); render(); }
+  });
 }
 
 /* ---------- BACKUP MANUAL (arquivo) ---------- */
 function openBackup(){
+  const temPreSync = !!DB.get(KEYS.preSync, null);
   showSheet(`
     <div class="sheet-head"><h2>Backup manual</h2><button class="close-x" onclick="closeSheet()">✕</button></div>
     <p class="small">Além da nuvem, você pode baixar um arquivo com todos os dados a qualquer momento.</p>
     <button class="btn btn-primary" onclick="exportarBackup()">⬇️ Baixar backup (.json)</button>
+    ${temPreSync?`<button class="btn btn-outline" style="margin-top:10px" onclick="baixarPreSync()">⬇️ Baixar cópia anterior à sincronização</button>`:''}
     <div class="divider"></div>
     <label class="field"><label>Restaurar backup</label>
       <input type="file" id="restoreFile" accept="application/json">
@@ -963,13 +1160,19 @@ function openBackup(){
     <button class="btn btn-outline" onclick="restaurarBackup()">⬆️ Restaurar a partir de arquivo</button>
   `);
 }
-function exportarBackup(){
-  const data = { alunos: state.alunos, aulas: state.aulas, presencas: state.presencas, usuarios: state.usuarios, exportadoEm: new Date().toISOString() };
-  const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
+function baixarArquivoJSON(obj, nome){
+  const blob = new Blob([JSON.stringify(obj, null, 2)], {type:'application/json'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url; a.download = `passo-certo-backup-${todayISO()}.json`;
+  a.href = url; a.download = nome;
   a.click(); URL.revokeObjectURL(url);
+}
+function exportarBackup(){
+  baixarArquivoJSON({ alunos: state.alunos, aulas: state.aulas, presencas: state.presencas, usuarios: state.usuarios, treinos: state.treinos, exportadoEm: new Date().toISOString() }, `passo-certo-backup-${todayISO()}.json`);
+}
+function baixarPreSync(){
+  const d = DB.get(KEYS.preSync, null);
+  if(d) baixarArquivoJSON(d, `passo-certo-antes-da-sincronizacao-${todayISO()}.json`);
 }
 function restaurarBackup(){
   const file = document.getElementById('restoreFile').files[0];
@@ -980,6 +1183,7 @@ function restaurarBackup(){
       const data = JSON.parse(e.target.result);
       if(!confirm('Isso vai substituir os dados atuais pelos dados do backup. Continuar?')) return;
       state.alunos = data.alunos||[]; state.aulas = data.aulas||[]; state.presencas = data.presencas||[];
+      state.treinos = data.treinos||[];
       state.usuarios = data.usuarios || [{codigo:0, nome:'Administrador', senhaHash:MASTER_HASH, dataDesativacao:null}];
       persist(); if(fb.ready) pushTudo(); closeSheet(); render();
     }catch(err){ alert('Arquivo de backup inválido.'); }
